@@ -1,0 +1,27 @@
+{
+  "name": "streampay",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@monad-crypto/mpp": "^0.0.3",
+    "@openzeppelin/contracts": "^5.6.1",
+    "hono": "^4.13.13",
+    "mppx": "^0.13.1",
+    "permissionless": "^0.4.1"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^4.2.0",
+    "@nomicfoundation/hardhat-toolbox": "^7.0.0",
+    "ethers": "^6.17.0",
+    "hardhat": "^3.18.1",
+    "viem": "^2.57.3"
+  }
+}
