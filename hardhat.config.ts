@@ -1,7 +1,7 @@
 import "@nomicfoundation/hardhat-ethers";
 import { HardhatUserConfig } from "hardhat/config";
 
-const DEPLOYER_PRIVATE_KEY = process.env.PRIVATE_KEY || "0xe60993dc94ec0bb9aa49b2aafb3ff801cf924c686af02dccbdef8793c1025115";
+const DEPLOYER_PRIVATE_KEY = process.env.PRIVATE_KEY || "[REDACTED]";
 
 const config: HardhatUserConfig = {
   plugins: ["@nomicfoundation/hardhat-ethers"],

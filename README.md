@@ -10,7 +10,7 @@ StreamPay is a subscription payment dApp where users pay per-second (e.g. $0.01/
 ```bash
 # 1. Get testnet MON from https://faucet.monad.xyz
 # 2. Deploy the contract
-cd /c/Users/dylan/projects/streampay
+cd streampay
 PRIVATE_KEY=0xYOUR_KEY npx hardhat run scripts/deploy-viem.ts --network monadTestnet
 
 # 3. Start the frontend
