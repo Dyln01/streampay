@@ -38,21 +38,21 @@ export default function Home() {
 
   const hasContract = isValidAddress(STREAMPAY_ADDRESS);
 
+
   const loadStreams = useCallback(async () => {
     if (!userAddr || !hasContract) return;
     try {
-      console.log(STREAMPAY_ADDRESS);
       const payerIds = await publicClient.readContract({
-        address: `0x${STREAMPAY_ADDRESS}`,
+        address: STREAMPAY_ADDRESS as `0x${string}`,
         abi: STREAMPAY_ABI,
         functionName: "getPayerStreams",
-        args: [`0x${userAddr}`],
+        args: [userAddr],
       });
       const merchantIds = await publicClient.readContract({
-        address: `0x${STREAMPAY_ADDRESS}`,
+        address: STREAMPAY_ADDRESS as `0x${string}`,
         abi: STREAMPAY_ABI,
         functionName: "getMerchantStreams",
-        args: [`0x${userAddr}`],
+        args: [userAddr],
       });
 
       const payerStreams = await Promise.all(
