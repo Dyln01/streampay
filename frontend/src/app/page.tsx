@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { createPublicClient, createWalletClient, http, formatEther, parseUnits, monadTestnet } from "viem";
+import { createPublicClient, createWalletClient, http, formatEther, parseUnits } from "viem";
+import { monadTestnet } from "viem/chains";
 
 const STREAMPAY_ADDRESS = (process.env.NEXT_PUBLIC_STREAMPAY_ADDRESS || "") as string;
 
