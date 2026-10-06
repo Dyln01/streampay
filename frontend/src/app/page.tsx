@@ -1,14 +1,15 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { createPublicClient, createWalletClient, http, formatEther, parseUnits } from "viem";
-import { monadTestnet } from "viem/chains";
+import { createPublicClient, createWalletClient, http, formatEther, parseUnits, monadTestnet } from "viem";
 
-const STREAMPAY_ADDRESS = process.env.NEXT_PUBLIC_STREAMPAY_ADDRESS as `0x${string}` | undefined;
+const STREAMPAY_ADDRESS = (process.env.NEXT_PUBLIC_STREAMPAY_ADDRESS || "") as string;
+
+const RPC = "https://testnet-rpc.monad.xyz";
 
 const publicClient = createPublicClient({
   chain: monadTestnet,
-  transport: http("https://testnet-rpc.monad.xyz"),
+  transport: http(RPC),
 });
 
 const STREAMPAY_ABI = [
@@ -22,40 +23,46 @@ const STREAMPAY_ABI = [
   "function paymentToken() external view returns (address)",
 ] as const;
 
+function isValidAddress(addr: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(addr);
+}
+
 export default function Home() {
-  const [address, setAddress] = useState<string | undefined>();
+  const [userAddr, setUserAddr] = useState<string | undefined>();
   const [walletClient, setWalletClient] = useState<any>();
   const [streams, setStreams] = useState<any[]>([]);
   const [merchantStreams, setMerchantStreams] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
+  const hasContract = isValidAddress(STREAMPAY_ADDRESS);
+
   const loadStreams = useCallback(async () => {
-    if (!address || !STREAMPAY_ADDRESS || !STREAMPAY_ADDRESS.startsWith("0x")) return;
+    if (!userAddr || !hasContract) return;
     try {
       const payerIds = await publicClient.readContract({
-        address: STREAMPAY_ADDRESS,
+        address: STREAMPAY_ADDRESS as `0x${string}`,
         abi: STREAMPAY_ABI,
         functionName: "getPayerStreams",
-        args: [address as `0x${string}`],
+        args: [userAddr as `0x${string}`],
       });
       const merchantIds = await publicClient.readContract({
-        address: STREAMPAY_ADDRESS,
+        address: STREAMPAY_ADDRESS as `0x${string}`,
         abi: STREAMPAY_ABI,
         functionName: "getMerchantStreams",
-        args: [address as `0x${string}`],
+        args: [userAddr as `0x${string}`],
       });
 
       const payerStreams = await Promise.all(
         (payerIds as bigint[]).map(async (id) => {
           const s = await publicClient.readContract({
-            address: STREAMPAY_ADDRESS,
+            address: STREAMPAY_ADDRESS as `0x${string}`,
             abi: STREAMPAY_ABI,
             functionName: "streams",
             args: [id],
           }) as [string, string, bigint, bigint, bigint, bigint, boolean];
           const acc = await publicClient.readContract({
-            address: STREAMPAY_ADDRESS,
+            address: STREAMPAY_ADDRESS as `0x${string}`,
             abi: STREAMPAY_ABI,
             functionName: "accrued",
             args: [id],
@@ -67,13 +74,13 @@ export default function Home() {
       const mStreams = await Promise.all(
         (merchantIds as bigint[]).map(async (id) => {
           const s = await publicClient.readContract({
-            address: STREAMPAY_ADDRESS,
+            address: STREAMPAY_ADDRESS as `0x${string}`,
             abi: STREAMPAY_ABI,
             functionName: "streams",
             args: [id],
           }) as [string, string, bigint, bigint, bigint, bigint, boolean];
           const acc = await publicClient.readContract({
-            address: STREAMPAY_ADDRESS,
+            address: STREAMPAY_ADDRESS as `0x${string}`,
             abi: STREAMPAY_ABI,
             functionName: "accrued",
             args: [id],
@@ -87,27 +94,27 @@ export default function Home() {
     } catch (e) {
       console.error("Load error:", e);
     }
-  }, [address]);
+  }, [userAddr, hasContract]);
 
   useEffect(() => {
-    if (address) loadStreams();
-  }, [address]);
+    if (userAddr) loadStreams();
+  }, [userAddr]);
 
   const connect = async () => {
     if (!(window as any).ethereum) { setMessage("Install MetaMask"); return; }
     const accounts = await (window as any).ethereum.request({ method: "eth_requestAccounts" });
     const wc = createWalletClient({ account: accounts[0], chain: monadTestnet, transport: http() });
-    setAddress(accounts[0]);
+    setUserAddr(accounts[0]);
     setWalletClient(wc);
   };
 
   const createStream = async (merchant: string, perSecond: string) => {
     if (!walletClient) { setMessage("Wallet not connected"); return; }
-    if (!STREAMPAY_ADDRESS) { setMessage("Contract address not set — check NEXT_PUBLIC_STREAMPAY_ADDRESS in .env.local"); return; }
+    if (!hasContract) { setMessage("Contract not deployed — set NEXT_PUBLIC_STREAMPAY_ADDRESS in .env.local"); return; }
     setLoading(true); setMessage("Creating stream...");
     try {
       const hash = await walletClient.writeContract({
-        address: STREAMPAY_ADDRESS!,
+        address: STREAMPAY_ADDRESS as `0x${string}`,
         abi: STREAMPAY_ABI,
         functionName: "createStream",
         args: [merchant as `0x${string}`, parseUnits(perSecond, 18)],
@@ -120,11 +127,11 @@ export default function Home() {
   };
 
   const claim = async (streamId: number) => {
-    if (!walletClient || !STREAMPAY_ADDRESS) return;
+    if (!walletClient || !hasContract) return;
     setLoading(true); setMessage("Claiming...");
     try {
       const hash = await walletClient.writeContract({
-        address: STREAMPAY_ADDRESS!,
+        address: STREAMPAY_ADDRESS as `0x${string}`,
         abi: STREAMPAY_ABI,
         functionName: "claim",
         args: [BigInt(streamId)],
@@ -141,13 +148,18 @@ export default function Home() {
       <h1 className="text-3xl font-bold mb-2">StreamPay</h1>
       <p className="text-green-600 mb-6">Per-second subscriptions on Monad — gasless for users</p>
 
-      {!address ? (
+      {!userAddr ? (
         <div className="bg-gray-900 border border-green-800 rounded-lg p-6 mb-6">
           <p className="text-gray-400 mb-4">Connect wallet to start.</p>
           <button onClick={connect} className="bg-green-700 hover:bg-green-600 text-white px-6 py-2 rounded">Connect MetaMask</button>
         </div>
       ) : (
         <>
+          {!hasContract && (
+            <div className="bg-red-900 border border-red-800 rounded-lg p-4 mb-6">
+              <p className="text-red-400">Contract address not set. Add NEXT_PUBLIC_STREAMPAY_ADDRESS to .env.local</p>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-6 mb-8">
             <section className="bg-gray-900 border border-green-800 rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Create Stream</h2>
