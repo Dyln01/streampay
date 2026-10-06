@@ -5,20 +5,17 @@ import { readFileSync } from "fs";
 
 const RPC = "https://testnet-rpc.monad.xyz";
 
-const account = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`);
-
-const publicClient = createPublicClient({
-  chain: monadTestnet,
-  transport: http(RPC),
-});
-
-const walletClient = createWalletClient({
-  account,
-  chain: monadTestnet,
-  transport: http(RPC),
-});
-
 async function main() {
+  const PRIVATE_KEY = process.env.PRIVATE_KEY;
+  if (!PRIVATE_KEY) {
+    console.error("Set PRIVATE_KEY env var first.");
+    process.exit(1);
+  }
+
+  const account = privateKeyToAccount(PRIVATE_KEY as `0x${string}`);
+  const publicClient = createPublicClient({ chain: monadTestnet, transport: http(RPC) });
+  const walletClient = createWalletClient({ account, chain: monadTestnet, transport: http(RPC) });
+
   console.log("Deployer:", account.address);
 
   const balance = await publicClient.getBalance({ address: account.address });
