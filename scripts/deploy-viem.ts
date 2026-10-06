@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { createPublicClient, createWalletClient, http, parseEther, formatEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { monadTestnet } from "viem/chains";
@@ -8,7 +9,7 @@ const RPC = "https://testnet-rpc.monad.xyz";
 async function main() {
   const PRIVATE_KEY = process.env.PRIVATE_KEY;
   if (!PRIVATE_KEY) {
-    console.error("Set PRIVATE_KEY env var first.");
+    console.error("Set PRIVATE_KEY in .env file first.");
     process.exit(1);
   }
 
