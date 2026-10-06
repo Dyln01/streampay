@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { createPublicClient, createWalletClient, http, formatEther, parseUnits } from "viem";
+import { createPublicClient, createWalletClient, http, formatEther, parseUnits, parseAbi } from "viem";
 import { monadTestnet } from "viem/chains";
 
 const STREAMPAY_ADDRESS = (process.env.NEXT_PUBLIC_STREAMPAY_ADDRESS || "") as string;
@@ -41,17 +41,18 @@ export default function Home() {
   const loadStreams = useCallback(async () => {
     if (!userAddr || !hasContract) return;
     try {
+      console.log(STREAMPAY_ADDRESS);
       const payerIds = await publicClient.readContract({
-        address: STREAMPAY_ADDRESS as `0x${string}`,
+        address: `0x${STREAMPAY_ADDRESS}`,
         abi: STREAMPAY_ABI,
         functionName: "getPayerStreams",
-        args: [userAddr as `0x${string}`],
+        args: [`0x${userAddr}`],
       });
       const merchantIds = await publicClient.readContract({
-        address: STREAMPAY_ADDRESS as `0x${string}`,
+        address: `0x${STREAMPAY_ADDRESS}`,
         abi: STREAMPAY_ABI,
         functionName: "getMerchantStreams",
-        args: [userAddr as `0x${string}`],
+        args: [`0x${userAddr}`],
       });
 
       const payerStreams = await Promise.all(
@@ -115,10 +116,10 @@ export default function Home() {
     setLoading(true); setMessage("Creating stream...");
     try {
       const hash = await walletClient.writeContract({
-        address: STREAMPAY_ADDRESS as `0x${string}`,
+        address: STREAMPAY_ADDRESS,
         abi: STREAMPAY_ABI,
         functionName: "createStream",
-        args: [merchant as `0x${string}`, parseUnits(perSecond, 18)],
+        args: [merchant, parseUnits(perSecond, 18)],
       });
       setMessage(`Tx: ${hash}`);
       await publicClient.waitForTransactionReceipt({ hash });
@@ -132,7 +133,7 @@ export default function Home() {
     setLoading(true); setMessage("Claiming...");
     try {
       const hash = await walletClient.writeContract({
-        address: STREAMPAY_ADDRESS as `0x${string}`,
+        address: STREAMPAY_ADDRESS,
         abi: STREAMPAY_ABI,
         functionName: "claim",
         args: [BigInt(streamId)],
