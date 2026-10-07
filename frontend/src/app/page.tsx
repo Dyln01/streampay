@@ -450,7 +450,7 @@ export default function Home() {
               {streams.length === 0 ? (
                 <div>
                   <p className="text-gray-500 mb-3">No streams yet.</p>
-                  <button onClick={() => { handleCreateStream(userAddr || "0x0000000000000000000000000000000000000000", "0.001", "0"); }} disabled={loading || !userAddr} className="bg-blue-800 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">Create Test Stream (to yourself)</button>
+                  <button onClick={() => { handleCreateStream(userAddr || "0x0000000000000000000000000000000000000000", "0.001", "10"); }} disabled={loading || !userAddr} className="bg-blue-800 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">Create Test Stream (to yourself)</button>
                   <p className="text-xs text-gray-600 mt-2">This creates a stream from your account to yourself for testing.</p>
                 </div>
               ) : (
@@ -486,7 +486,7 @@ export default function Home() {
             {merchantStreams.length === 0 ? (
               <div>
                 <p className="text-gray-500 mb-3">No streams received.</p>
-                <button onClick={() => { handleCreateStream(userAddr || "0x00000000000000000000000000000000000000", "0.001", "0"); }} disabled={loading || !userAddr} className="bg-blue-800 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">Create Test Stream (to yourself)</button>
+                <button onClick={() => { handleCreateStream(userAddr || "0x00000000000000000000000000000000000000", "0.001", "10"); }} disabled={loading || !userAddr} className="bg-blue-800 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">Create Test Stream (to yourself)</button>
                 <p className="text-xs text-gray-600 mt-2">Creates a stream from your account to yourself for testing.</p>
               </div>
             ) : (
