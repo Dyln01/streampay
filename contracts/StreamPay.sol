@@ -87,16 +87,23 @@ contract StreamPay is Ownable, Pausable {
     // Merchant claims accrued payments
     function claim(uint256 _streamId) external whenNotPaused returns (uint256) {
         Stream storage s = streams[_streamId];
-        _checkActive(_streamId);
-        require(s.active, "stream inactive");
         require(s.merchant == msg.sender, "not merchant");
 
         uint256 elapsed = block.timestamp - s.lastClaimed;
         uint256 owed = elapsed * s.amountPerSecond;
+
+        // Allow claim if stream is active or expired within 7-day grace period
+        bool expired = s.duration > 0 && block.timestamp >= s.startTime + s.duration;
+        require(s.active || expired, "stream inactive");
         require(owed > 0, "nothing owed");
 
         s.totalPaid += owed;
         s.lastClaimed = block.timestamp;
+
+        if (expired) {
+            s.active = false;
+            emit StreamExpired(_streamId, s.merchant, s.totalPaid);
+        }
 
         paymentToken.safeTransferFrom(s.payer, msg.sender, owed);
 
