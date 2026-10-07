@@ -99,7 +99,7 @@ export default function Home() {
         args: [userAddr as `0x${string}`],
       }) as bigint[];
 
-      const allIds = [...payerIds, ...merchantIds];
+      const allIds = [...new Set([...payerIds, ...merchantIds])];
       const batchSize = 3;
       const results = [];
       for (let i = 0; i < allIds.length; i += batchSize) {
@@ -177,6 +177,11 @@ export default function Home() {
       }
     }
     try {
+      // Clear any pending permissions first
+      try {
+        await (window as any).ethereum.request({ method: "wallet_requestPermissions", params: [{ eth_accounts: {} }] });
+      } catch (_) { /* ignore — permissions may already be granted */ }
+
       const accounts = await (window as any).ethereum.request({ method: "eth_requestAccounts" });
       const wc = createWalletClient({ account: accounts[0], chain: monadTestnet, transport: custom((window as any).ethereum) });
       setUserAddr(accounts[0]);
