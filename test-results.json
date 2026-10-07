@@ -1,16 +1,6 @@
 {
-  "status": "pending_deployment",
-  "reason": "Contract not yet deployed to testnet - needs MON from faucet",
-  "test_plan": [
-    "Test 1: Initial state - streamCount starts at 0",
-    "Test 2: Create stream - streamCount increments",
-    "Test 3: Stream data - merchant, rate, active flag",
-    "Test 4: Accrued before time passes - ~0 MON",
-    "Test 5: Stream indexing - payer and merchant arrays",
-    "Test 6: Cancel stream - inactive flag set",
-    "Test 7: Cannot claim cancelled stream - reverts"
-  ],
-  "contract": "not_deployed",
-  "network": "monadTestnet",
-  "chainId": 10143
+  "passed": 10,
+  "failed": 0,
+  "total": 10,
+  "contract": "0x16d9562d0d1dbf59b9436e4ac90daadd9530c406"
 }

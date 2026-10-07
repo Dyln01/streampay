@@ -16,14 +16,12 @@ async function main() {
 
   console.log("Deployer:", account.address);
 
-  const artifact = JSON.parse(readFileSync("./artifacts/contracts/StreamPay.sol/StreamPay.json", "utf-8"));
-  const mockToken = process.env.MOCK_TOKEN || "0x5a3b54c38bb0097e0e4cd69c8deda1c483fc4c42";
-
-  console.log("Deploying StreamPay with token:", mockToken);
-  const hash = await walletClient.deployContract({ abi: artifact.abi, bytecode: artifact.bytecode, args: [mockToken] });
+  const artifact = JSON.parse(readFileSync("./artifacts/contracts/MockToken.sol/MockToken.json", "utf-8"));
+  console.log("Deploying MockToken...");
+  const hash = await walletClient.deployContract({ abi: artifact.abi, bytecode: artifact.bytecode });
   console.log("Tx hash:", hash);
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
-  console.log("StreamPay deployed at:", receipt.contractAddress);
+  console.log("MockToken deployed at:", receipt.contractAddress);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

@@ -1,8 +1,8 @@
-#!/bin/bash
-# StreamPay Test Suite
-# Run: npx tsx scripts/test-streampay.ts
+// StreamPay Test Suite
+// Run: npx tsx scripts/test-streampay.ts
 
-import { createPublicClient, createWalletClient, http, parseUnits, formatEther } from "viem";
+import "dotenv/config";
+import { createPublicClient, createWalletClient, http, parseUnits, formatEther, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { monadTestnet } from "viem/chains";
 
@@ -18,16 +18,21 @@ const account = privateKeyToAccount(DEPLOYER_KEY as `0x${string}`);
 const publicClient = createPublicClient({ chain: monadTestnet, transport: http(RPC) });
 const walletClient = createWalletClient({ account, chain: monadTestnet, transport: http(RPC) });
 
-const STREAMPAY_ABI = [
-  "function createStream(address _merchant, uint256 _amountPerSecond) external returns (uint256)",
+const STREAMPAY_ABI = parseAbi([
+  "function createStream(address _merchant, uint256 _amountPerSecond, uint256 _duration) external returns (uint256)",
   "function claim(uint256 _streamId) external returns (uint256)",
   "function cancel(uint256 _streamId) external",
   "function accrued(uint256 _streamId) external view returns (uint256)",
-  "function streams(uint256) external view returns (address payer, address merchant, uint256 amountPerSecond, uint256 startTime, uint256 lastClaimed, uint256 totalPaid, bool active)",
+  "function streams(uint256) external view returns (address payer, address merchant, uint256 amountPerSecond, uint256 startTime, uint256 lastClaimed, uint256 totalPaid, uint256 duration, bool active)",
   "function getPayerStreams(address) external view returns (uint256[])",
   "function getMerchantStreams(address) external view returns (uint256[])",
   "function paymentToken() external view returns (address)",
-] as const;
+  "function allowance(address owner, address spender) external view returns (uint256)",
+  "function approve(address spender, uint256 amount) external returns (bool)",
+  "function streamCount() external view returns (uint256)",
+  "function pause() external",
+  "function unpause() external",
+]);
 
 let passed = 0;
 let failed = 0;
@@ -66,7 +71,7 @@ async function main() {
   const merchant = "0x" + "ff".repeat(20);
   const createHash = await walletClient.writeContract({
     ...contract, functionName: "createStream",
-    args: [merchant as `0x${string}`, parseUnits("0.001", 18)],
+    args: [merchant as `0x${string}`, parseUnits("0.001", 18), 0n],
   });
   await publicClient.waitForTransactionReceipt({ hash: createHash });
   const countAfter = await publicClient.readContract({ ...contract, functionName: "streamCount", args: [] });
@@ -75,9 +80,10 @@ async function main() {
   // Test 3: Stream data
   console.log("\nTest 3: Stream data");
   const stream = await publicClient.readContract({ ...contract, functionName: "streams", args: [0n] });
-  assert(stream[1] === merchant, "merchant address correct");
+  assert(stream[1].toLowerCase() === merchant.toLowerCase(), "merchant address correct");
   assert(stream[2] === parseUnits("0.001", 18), "amountPerSecond correct");
-  assert(stream[6] === true, "stream is active");
+  assert(stream[6] === BigInt(0), "duration is 0");
+  assert(stream[7] === true, "stream is active");
 
   // Test 4: Accrued before time passes
   console.log("\nTest 4: Accrued before time passes");
@@ -98,7 +104,7 @@ async function main() {
   });
   await publicClient.waitForTransactionReceipt({ hash: cancelHash });
   const streamAfterCancel = await publicClient.readContract({ ...contract, functionName: "streams", args: [0n] });
-  assert(streamAfterCancel[6] === false, "stream is inactive after cancel");
+  assert(streamAfterCancel[7] === false, "stream is inactive after cancel");
 
   // Test 7: Cannot claim cancelled stream
   console.log("\nTest 7: Cannot claim cancelled stream");
