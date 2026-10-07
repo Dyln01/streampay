@@ -465,7 +465,7 @@ export default function Home() {
                     <p>Accrued: {formatEther(s.accrued)} MON</p>
                     <p>Duration: {formatDuration(s.duration)}</p>
                     <p>Status: {s.active ? (s.duration > BigInt(0) && /* need to check expiry */ "Active") : "Inactive"}</p>
-                    <p>Refund if cancel: {formatEther(s.totalPaid + (BigInt(Math.floor(Date.now()/1000)) - s.lastClaimed) * s.amountPerSecond)} MON</p>
+                    <p>Refund if cancel: {formatEther(s.totalPaid)} MON</p>
                     {s.active && (
                       <div className="flex gap-2 mt-2 flex-wrap">
                         <button onClick={() => handleCancel(s.id)} disabled={loading} className="bg-red-800 hover:bg-red-700 text-white px-3 py-1 rounded text-xs">Cancel</button>
