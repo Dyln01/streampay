@@ -197,7 +197,9 @@ export default function Home() {
       });
     } catch (e: any) {
       if (e.code === -32002) {
-        addToast("Approval already pending — check MetaMask", "error");
+        addToast("Approval already pending — check MetaMask or refresh the page", "error");
+      } else if (e.code === 4001) {
+        addToast("Connection rejected by user", "error");
       } else {
         addToast(`Connect failed: ${e.message}`, "error");
       }
