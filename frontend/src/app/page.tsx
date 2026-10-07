@@ -450,7 +450,7 @@ export default function Home() {
                 </div>
               ) : (
                 <ul className="space-y-2">{streams.map((s) => (
-                  <li key={s.id} className="border border-green-800 rounded p-3">
+                  <li key={`payer-${s.id}`} className="border border-green-800 rounded p-3">
                     <p>Merchant: <code className="text-xs">{s.merchant.slice(0, 8)}...{s.merchant.slice(-6)}</code>
                       <button onClick={() => copyToClipboard(s.merchant)} className="ml-1 text-green-600 underline text-xs">Copy</button>
                     </p>
@@ -486,7 +486,7 @@ export default function Home() {
               </div>
             ) : (
               <ul className="space-y-2">{merchantStreams.map((s) => (
-                <li key={s.id} className="border border-green-800 rounded p-3 flex justify-between items-center">
+                <li key={`merchant-${s.id}`} className="border border-green-800 rounded p-3 flex justify-between items-center">
                   <div>
                     <p>Payer: <code className="text-xs">{s.payer.slice(0, 8)}...{s.payer.slice(-6)}</code>
                       <button onClick={() => copyToClipboard(s.payer)} className="ml-1 text-green-600 underline text-xs">Copy</button>
@@ -496,7 +496,7 @@ export default function Home() {
                     <p>Duration: {formatDuration(s.duration)}</p>
                     <p>Active: {s.active ? "Yes" : "No"}</p>
                   </div>
-                  <button onClick={() => handleClaim(s.id)} disabled={loading || s.accrued === BigInt(0) || !s.active} className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded disabled:opacity-50 text-sm">Claim</button>
+                  <button onClick={() => handleClaim(s.id)} disabled={loading} className={`px-4 py-2 rounded text-sm ${s.active ? "bg-green-700 hover:bg-green-600" : "bg-yellow-700 hover:bg-yellow-600"} text-white disabled:opacity-50`}>{s.active ? "Claim" : "Claim After Expiry"}</button>
                 </li>
               ))}</ul>
             )}
