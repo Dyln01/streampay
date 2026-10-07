@@ -153,6 +153,8 @@ export default function Home() {
 
   useEffect(() => {
     if (userAddr) loadStreams();
+    const interval = setInterval(loadStreams, 5000);
+    return () => clearInterval(interval);
   }, [userAddr]);
 
   const connect = async () => {
