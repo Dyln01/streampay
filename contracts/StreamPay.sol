@@ -93,12 +93,14 @@ contract StreamPay is Ownable, Pausable {
         uint256 owed = elapsed * s.amountPerSecond;
         uint256 total = s.duration * s.amountPerSecond;
         uint256 remaining = total > s.totalPaid ? total - s.totalPaid : 0;
-        uint256 claimAmount = owed < remaining ? owed : remaining;
 
         // Allow claim if stream is active, expired, or had funds (was ever active)
         bool expired = s.duration > 0 && block.timestamp >= s.startTime + s.duration;
         bool hadFunds = s.totalPaid > 0 || s.amountPerSecond > 0;
         require(s.active || expired || hadFunds, "stream inactive");
+
+        // For active streams, claim accrued amount. For inactive/expired, claim remaining.
+        uint256 claimAmount = s.active ? (owed < remaining ? owed : remaining) : remaining;
         require(claimAmount > 0, "nothing owed");
 
         s.totalPaid += claimAmount;
