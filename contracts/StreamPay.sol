@@ -111,8 +111,8 @@ contract StreamPay is Ownable, Pausable {
 
         paymentToken.safeTransferFrom(s.payer, msg.sender, claimAmount);
 
-        emit PaymentClaimed(_streamId, msg.sender, owed);
-        return owed;
+        emit PaymentClaimed(_streamId, msg.sender, claimAmount);
+        return claimAmount;
     }
 
     function cancel(uint256 _streamId) external whenNotPaused {
