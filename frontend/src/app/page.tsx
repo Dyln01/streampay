@@ -62,6 +62,7 @@ export default function Home() {
   const [toasts, setToasts] = useState<{ message: string; type: "success" | "error" | "info" }[]>([]);
   const [networkOk, setNetworkOk] = useState(true);
   const [tick, setTick] = useState(0);
+  const streamStartRef = useRef<number>(0);
   const toastId = useRef(0);
 
   const hasContract = isValidAddress(STREAMPAY_ADDRESS);
@@ -129,7 +130,7 @@ export default function Home() {
                 } else throw e;
               }
             }
-            return { id: Number(id), payer: s![0], merchant: s![1], amountPerSecond: s![2], startTime: s![3], lastClaimed: s![4], totalPaid: s![5], duration: s![6], active: s![7], accrued: acc };
+            return { id: Number(id), payer: s![0], merchant: s![1], amountPerSecond: s![2], startTime: s![3], lastClaimed: s![4], totalPaid: s![5], duration: s![6], active: s![7], accrued: acc, countdown: s![6] > 0n && s![7] ? s![6] - (BigInt(Math.floor(Date.now()/1000)) - s![3]) : 0n };
           })
         );
         results.push(...batchResults);
@@ -470,7 +471,7 @@ export default function Home() {
                       <button onClick={() => copyToClipboard(s.merchant)} className="ml-1 text-green-600 underline text-xs">Copy</button>
                     </p>
                     <p>Rate: {formatEther(s.amountPerSecond)} MON/sec</p>
-                    <p>Accrued: {formatEther(s.accrued)} MON (tick: {tick})</p>
+                    <p>Accrued: {formatEther(s.accrued)} MON (tick: {tick}) {s.countdown > 0n && <span style={{color: '#ff6b6b'}}>⏱ {s.countdown.toString()}s left</span>}</p>
                     <p>Duration: {formatDuration(s.duration)}</p>
                     <p>Status: {s.active ? (s.duration > BigInt(0) && /* need to check expiry */ "Active") : "Inactive"}</p>
                     <p>Refund if cancel: {formatEther(s.totalPaid)} MON</p>
@@ -507,7 +508,7 @@ export default function Home() {
                       <button onClick={() => copyToClipboard(s.payer)} className="ml-1 text-green-600 underline text-xs">Copy</button>
                     </p>
                     <p>Rate: {formatEther(s.amountPerSecond)} MON/sec</p>
-                    <p>Accrued: {formatEther(s.accrued)} MON (tick: {tick})</p>
+                    <p>Accrued: {formatEther(s.accrued)} MON (tick: {tick}) {s.countdown > 0n && <span style={{color: '#ff6b6b'}}>⏱ {s.countdown.toString()}s left</span>}</p>
                     <p>Duration: {formatDuration(s.duration)}</p>
                     <p>Active: {s.active ? "Yes" : "No"}</p>
                   </div>
