@@ -61,6 +61,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [toasts, setToasts] = useState<{ message: string; type: "success" | "error" | "info" }[]>([]);
   const [networkOk, setNetworkOk] = useState(true);
+  const [tick, setTick] = useState(0);
   const toastId = useRef(0);
 
   const hasContract = isValidAddress(STREAMPAY_ADDRESS);
@@ -154,7 +155,8 @@ export default function Home() {
   useEffect(() => {
     if (userAddr) loadStreams();
     const interval = setInterval(loadStreams, 5000);
-    return () => clearInterval(interval);
+    const tickInterval = setInterval(() => setTick(t => t + 1), 1000);
+    return () => { clearInterval(interval); clearInterval(tickInterval); };
   }, [userAddr]);
 
   const connect = async () => {
@@ -464,7 +466,7 @@ export default function Home() {
                       <button onClick={() => copyToClipboard(s.merchant)} className="ml-1 text-green-600 underline text-xs">Copy</button>
                     </p>
                     <p>Rate: {formatEther(s.amountPerSecond)} MON/sec</p>
-                    <p>Accrued: {formatEther(s.accrued)} MON</p>
+                    <p>Accrued: {formatEther(s.accrued)} MON (tick: {tick})</p>
                     <p>Duration: {formatDuration(s.duration)}</p>
                     <p>Status: {s.active ? (s.duration > BigInt(0) && /* need to check expiry */ "Active") : "Inactive"}</p>
                     <p>Refund if cancel: {formatEther(s.totalPaid)} MON</p>
@@ -501,7 +503,7 @@ export default function Home() {
                       <button onClick={() => copyToClipboard(s.payer)} className="ml-1 text-green-600 underline text-xs">Copy</button>
                     </p>
                     <p>Rate: {formatEther(s.amountPerSecond)} MON/sec</p>
-                    <p>Accrued: {formatEther(s.accrued)} MON</p>
+                    <p>Accrued: {formatEther(s.accrued)} MON (tick: {tick})</p>
                     <p>Duration: {formatDuration(s.duration)}</p>
                     <p>Active: {s.active ? "Yes" : "No"}</p>
                   </div>
