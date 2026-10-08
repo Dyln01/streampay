@@ -130,7 +130,9 @@ contract StreamPay is Ownable, Pausable {
         Stream memory s = streams[_streamId];
         if (!s.active) return 0;
         uint256 elapsed = block.timestamp - s.lastClaimed;
-        return elapsed * s.amountPerSecond;
+        uint256 owed = elapsed * s.amountPerSecond;
+        uint256 total = s.duration * s.amountPerSecond;
+        return owed < total ? owed : total;
     }
 
     function getPayerStreams(address _payer) external view returns (uint256[] memory) {
