@@ -83,22 +83,38 @@ export default function Home() {
   }, []);
 
 
+  const retryCall = async <T>(fn: () => Promise<T>, retries: number = 3, delay: number = 1000): Promise<T> => {
+    for (let i = 0; i < retries; i++) {
+      try {
+        return await fn();
+      } catch (e: any) {
+        if (i === retries - 1) throw e;
+        if (e.message?.includes("rate") || e.message?.includes("limit") || e.message?.includes("Bad Request")) {
+          await new Promise((r) => setTimeout(r, delay * (i + 1)));
+        } else {
+          throw e;
+        }
+      }
+    }
+    throw new Error("Max retries exceeded");
+  };
+
   const loadStreams = useCallback(async () => {
     if (!userAddr || !hasContract) return;
     setLoading(true);
     try {
-      const payerIds = await publicClient.readContract({
+      const payerIds = await retryCall(() => publicClient.readContract({
         address: STREAMPAY_ADDRESS as `0x${string}`,
         abi: STREAMPAY_ABI,
         functionName: "getPayerStreams",
         args: [userAddr as `0x${string}`],
-      }) as bigint[];
-      const merchantIds = await publicClient.readContract({
+      }) as Promise<bigint[]>);
+      const merchantIds = await retryCall(() => publicClient.readContract({
         address: STREAMPAY_ADDRESS as `0x${string}`,
         abi: STREAMPAY_ABI,
         functionName: "getMerchantStreams",
         args: [userAddr as `0x${string}`],
-      }) as bigint[];
+      }) as Promise<bigint[]>);
 
       const allIds = [...new Set([...payerIds, ...merchantIds])];
       const batchSize = 3;
@@ -116,12 +132,12 @@ export default function Home() {
                   functionName: "streams",
                   args: [id],
                 }) as [string, string, bigint, bigint, bigint, bigint, bigint, boolean];
-                acc = await publicClient.readContract({
+                acc = await retryCall(() => publicClient.readContract({
                   address: STREAMPAY_ADDRESS as `0x${string}`,
                   abi: STREAMPAY_ABI,
                   functionName: "accrued",
                   args: [id],
-                });
+                }) as Promise<bigint>);
                 break;
               } catch (e: any) {
                 if (e.message?.includes("limited to 15/sec") && retry < 2) {
