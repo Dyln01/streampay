@@ -61,7 +61,6 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [toasts, setToasts] = useState<{ message: string; type: "success" | "error" | "info" }[]>([]);
   const [networkOk, setNetworkOk] = useState(true);
-  const [tick, setTick] = useState(0);
   const streamStartRef = useRef<number>(0);
   const toastId = useRef(0);
 
@@ -143,9 +142,6 @@ export default function Home() {
       const mStreams = results.filter((r) => merchantIds.includes(BigInt(r.id)));
       setStreams(payerStreams);
       setMerchantStreams(mStreams);
-      if (payerStreams.length > 0 || mStreams.length > 0) {
-        addToast(`Loaded ${payerStreams.length + mStreams.length} stream(s)`, "info");
-      }
     } catch (e: any) {
       console.error("Load error:", e);
       addToast("Load failed: " + (e.message || "unknown error"), "error");
@@ -156,8 +152,7 @@ export default function Home() {
   useEffect(() => {
     if (userAddr) loadStreams();
     const interval = setInterval(loadStreams, 5000);
-    const tickInterval = setInterval(() => setTick(t => t + 1), 1000);
-    return () => { clearInterval(interval); clearInterval(tickInterval); };
+    return () => clearInterval(interval);
   }, [userAddr]);
 
   const connect = async () => {
@@ -471,7 +466,7 @@ export default function Home() {
                       <button onClick={() => copyToClipboard(s.merchant)} className="ml-1 text-green-600 underline text-xs">Copy</button>
                     </p>
                     <p>Rate: {formatEther(s.amountPerSecond)} MON/sec</p>
-                    <p>Accrued: {formatEther(s.accrued)} MON (tick: {tick}) {s.countdown > 0n && <span style={{color: '#ff6b6b'}}>⏱ {s.countdown.toString()}s left</span>}</p>
+                    <p>Accrued: {formatEther(s.accrued)} MON {s.countdown > 0n && <span style={{color: '#ff6b6b'}}>⏱ {s.countdown.toString()}s left</span>}</p>
                     <p>Duration: {formatDuration(s.duration)}</p>
                     <p>Status: {s.active ? (s.duration > BigInt(0) && /* need to check expiry */ "Active") : "Inactive"}</p>
                     <p>Refund if cancel: {formatEther(s.totalPaid)} MON</p>
@@ -508,7 +503,7 @@ export default function Home() {
                       <button onClick={() => copyToClipboard(s.payer)} className="ml-1 text-green-600 underline text-xs">Copy</button>
                     </p>
                     <p>Rate: {formatEther(s.amountPerSecond)} MON/sec</p>
-                    <p>Accrued: {formatEther(s.accrued)} MON (tick: {tick}) {s.countdown > 0n && <span style={{color: '#ff6b6b'}}>⏱ {s.countdown.toString()}s left</span>}</p>
+                    <p>Accrued: {formatEther(s.accrued)} MON {s.countdown > 0n && <span style={{color: '#ff6b6b'}}>⏱ {s.countdown.toString()}s left</span>}</p>
                     <p>Duration: {formatDuration(s.duration)}</p>
                     <p>Active: {s.active ? "Yes" : "No"}</p>
                   </div>
