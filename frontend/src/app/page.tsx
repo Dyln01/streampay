@@ -407,8 +407,12 @@ export default function Home() {
     const d = Number(sec);
     const days = Math.floor(d / 86400);
     const hrs = Math.floor((d % 86400) / 3600);
+    const mins = Math.floor((d % 3600) / 60);
+    const secs = d % 60;
     if (days > 0) return `${days}d ${hrs}h`;
-    return `${hrs}h`;
+    if (hrs > 0) return `${hrs}h ${mins}m`;
+    if (mins > 0) return `${mins}m ${secs}s`;
+    return `${secs}s`;
   };
 
   return (
