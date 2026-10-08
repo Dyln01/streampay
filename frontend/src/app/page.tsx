@@ -83,7 +83,7 @@ export default function Home() {
   }, []);
 
 
-  const retryCall = async <T>(fn: () => Promise<T>, retries: number = 3, delay: number = 1000): Promise<T> => {
+  const retryCall = async (fn: () => Promise<any>, retries: number = 3, delay: number = 1000): Promise<any> => {
     for (let i = 0; i < retries; i++) {
       try {
         return await fn();
