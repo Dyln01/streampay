@@ -91,14 +91,17 @@ contract StreamPay is Ownable, Pausable {
 
         uint256 elapsed = block.timestamp - s.lastClaimed;
         uint256 owed = elapsed * s.amountPerSecond;
+        uint256 total = s.duration * s.amountPerSecond;
+        uint256 remaining = total > s.totalPaid ? total - s.totalPaid : 0;
+        uint256 claimAmount = owed < remaining ? owed : remaining;
 
         // Allow claim if stream is active, expired, or had funds (was ever active)
         bool expired = s.duration > 0 && block.timestamp >= s.startTime + s.duration;
         bool hadFunds = s.totalPaid > 0 || s.amountPerSecond > 0;
         require(s.active || expired || hadFunds, "stream inactive");
-        require(owed > 0, "nothing owed");
+        require(claimAmount > 0, "nothing owed");
 
-        s.totalPaid += owed;
+        s.totalPaid += claimAmount;
         s.lastClaimed = block.timestamp;
 
         if (expired) {
@@ -106,7 +109,7 @@ contract StreamPay is Ownable, Pausable {
             emit StreamExpired(_streamId, s.merchant, s.totalPaid);
         }
 
-        paymentToken.safeTransferFrom(s.payer, msg.sender, owed);
+        paymentToken.safeTransferFrom(s.payer, msg.sender, claimAmount);
 
         emit PaymentClaimed(_streamId, msg.sender, owed);
         return owed;
