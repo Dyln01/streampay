@@ -128,7 +128,7 @@ contract StreamPay is Ownable, Pausable {
     // Read: accrued but unclaimed amount for a merchant
     function accrued(uint256 _streamId) external view returns (uint256) {
         Stream memory s = streams[_streamId];
-        if (!s.active && !(s.duration > 0 && block.timestamp >= s.startTime + s.duration)) return 0;
+        if (!s.active) return 0;
         uint256 elapsed = block.timestamp - s.lastClaimed;
         return elapsed * s.amountPerSecond;
     }
