@@ -215,6 +215,7 @@ export default function Home() {
     try {
       const amount = parseUnits(perSecond, 18);
       const dur = BigInt(duration === "" ? "0" : duration);
+      const totalAmount = amount * (dur > 0n ? dur : 1000000000000000000n);
 
       const tokenAddr = await publicClient.readContract({
         address: STREAMPAY_ADDRESS as `0x${string}`,
@@ -234,7 +235,7 @@ export default function Home() {
         args: [userAddr as `0x${string}`, STREAMPAY_ADDRESS as `0x${string}`],
       });
 
-      if (allowance < amount) {
+      if (allowance < totalAmount) {
         addToast("Approving tokens (max)...", "info");
         const { request } = await publicClient.simulateContract({
           address: tokenAddr,
