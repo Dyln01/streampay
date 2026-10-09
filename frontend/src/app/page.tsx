@@ -1,609 +1,474 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { createPublicClient, createWalletClient, http, custom, formatEther, parseUnits, parseAbi } from "viem";
+import { createPublicClient, createWalletClient, http, custom, formatEther, parseEther, parseAbi } from "viem";
 import { monadTestnet } from "viem/chains";
 
 const STREAMPAY_ADDRESS = (process.env.NEXT_PUBLIC_STREAMPAY_ADDRESS || "") as string;
-
 const RPC = "https://testnet-rpc.monad.xyz";
+const ZERO = BigInt(0);
 
-const publicClient = createPublicClient({
-  chain: monadTestnet,
-  transport: http(RPC),
-});
+const publicClient = createPublicClient({ chain: monadTestnet, transport: http(RPC) });
 
+// Native-MON escrow StreamPay. The getter returns the struct field order.
 const STREAMPAY_ABI = parseAbi([
-  "function createStream(address _merchant, uint256 _amountPerSecond, uint256 _duration) external returns (uint256)",
+  "function createStream(address _merchant, uint256 _amountPerSecond, uint256 _duration) external payable returns (uint256)",
+  "function fundStream(uint256 _streamId) external payable",
+  "function extendStream(uint256 _streamId, uint256 _additionalDuration) external payable",
+  "function transferStream(uint256 _streamId, address _newPayer) external",
   "function claim(uint256 _streamId) external returns (uint256)",
   "function cancel(uint256 _streamId) external",
+  "function streams(uint256) external view returns (address payer, address merchant, uint256 amountPerSecond, uint256 deposit, uint256 withdrawn, uint256 startTime, uint256 duration, bool active, bool cancelled)",
   "function accrued(uint256 _streamId) external view returns (uint256)",
-  "function streams(uint256) external view returns (address payer, address merchant, uint256 amountPerSecond, uint256 startTime, uint256 lastClaimed, uint256 totalPaid, uint256 duration, bool active)",
+  "function vestedAmount(uint256 _streamId) external view returns (uint256)",
+  "function calculateRefund(uint256 _streamId) external view returns (uint256)",
+  "function isEnded(uint256 _streamId) external view returns (bool)",
+  "function getStreamStatus(uint256 _streamId) external view returns (string)",
   "function getPayerStreams(address) external view returns (uint256[])",
   "function getMerchantStreams(address) external view returns (uint256[])",
-  "function paymentToken() external view returns (address)",
-  "function allowance(address owner, address spender) external view returns (uint256)",
-  "function approve(address spender, uint256 amount) external returns (bool)",
+  "function totalEscrowed() external view returns (uint256)",
+  "function streamCount() external view returns (uint256)",
+  "function paused() external view returns (bool)",
   "function pause() external",
   "function unpause() external",
-  "function extendStream(uint256 _streamId, uint256 _additionalDuration) external",
-  "function transferStream(uint256 _streamId, address _newPayer) external",
-  "function emergencyWithdraw(uint256 _streamId) external",
-  "function claimAfterExpiry(uint256 _streamId) external returns (uint256)",
+  "function sweepExcess() external",
+  "function VERSION() external view returns (string)",
+  "function owner() external view returns (address)",
 ]);
 
-function isValidAddress(addr: string): boolean {
-  return /^0x[0-9a-fA-F]{40}$/.test(addr);
+const OWNER = "0xcb19c6d23d0753228ed86039e790a624ea4670a1";
+
+type StreamRow = {
+  id: number;
+  payer: string;
+  merchant: string;
+  amountPerSecond: bigint;
+  deposit: bigint;
+  withdrawn: bigint;
+  startTime: bigint;
+  duration: bigint;
+  active: boolean;
+  cancelled: boolean;
+};
+
+function isValidAddress(a: string) {
+  return /^0x[0-9a-fA-F]{40}$/.test(a);
+}
+const copy = (t: string) => navigator.clipboard.writeText(t).catch(() => {});
+const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+
+/** What has vested to the merchant right now (mirrors the contract's _vested). */
+function vested(s: StreamRow, nowSec: bigint): bigint {
+  if (nowSec <= s.startTime) return ZERO;
+  let v = (nowSec - s.startTime) * s.amountPerSecond;
+  const cap = s.duration > ZERO ? s.duration * s.amountPerSecond : s.deposit;
+  if (v > cap) v = cap;
+  if (v > s.deposit) v = s.deposit;
+  return v;
+}
+function claimable(s: StreamRow, nowSec: bigint): bigint {
+  if (!s.active) return ZERO;
+  const v = vested(s, nowSec);
+  return v > s.withdrawn ? v - s.withdrawn : ZERO;
+}
+function refundNow(s: StreamRow, nowSec: bigint): bigint {
+  if (s.cancelled) return ZERO;
+  const v = vested(s, nowSec);
+  return s.deposit > v ? s.deposit - v : ZERO;
+}
+function ended(s: StreamRow, nowSec: bigint): boolean {
+  if (s.duration > ZERO && nowSec >= s.startTime + s.duration) return true;
+  return vested(s, nowSec) >= s.deposit;
+}
+function timeLeft(s: StreamRow, nowSec: bigint): bigint {
+  if (s.duration === ZERO) {
+    if (s.amountPerSecond === ZERO) return ZERO;
+    const remaining = s.deposit > s.withdrawn ? s.deposit - s.withdrawn : ZERO;
+    return remaining / s.amountPerSecond;
+  }
+  const end = s.startTime + s.duration;
+  return end > nowSec ? end - nowSec : ZERO;
 }
 
-function copyToClipboard(text: string) {
-  navigator.clipboard.writeText(text).catch(() => {});
+function fmtDuration(sec: bigint) {
+  if (sec === ZERO) return "—";
+  const d = Number(sec);
+  const days = Math.floor(d / 86400);
+  const hrs = Math.floor((d % 86400) / 3600);
+  const mins = Math.floor((d % 3600) / 60);
+  const secs = d % 60;
+  if (days > 0) return `${days}d ${hrs}h`;
+  if (hrs > 0) return `${hrs}h ${mins}m`;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
 }
 
-function Toast({ message, type, onClose }: { message: string; type: "success" | "error" | "info"; onClose: () => void }) {
+function Toast({ t, onClose }: { t: { message: string; type: string }; onClose: () => void }) {
+  const cls =
+    t.type === "success" ? "bg-green-900 border-green-500 text-green-100"
+    : t.type === "error" ? "bg-red-950 border-red-600 text-red-100"
+    : "bg-blue-950 border-blue-600 text-blue-100";
   return (
-    <div className={`border rounded-lg p-3 mb-2 flex justify-between items-center text-sm ${
-      type === "success" ? "bg-green-800 border-green-600 text-green-100" :
-      type === "error" ? "bg-red-900 border-red-600 text-red-100" :
-      "bg-blue-900 border-blue-600 text-blue-100"
-    }`}>
-      <span>{message}</span>
-      <button onClick={onClose} className="ml-3 text-xs underline flex-shrink-0">Dismiss</button>
+    <div className={`border rounded p-3 mb-2 flex justify-between gap-3 text-xs ${cls}`}>
+      <span className="break-all">{t.message}</span>
+      <button onClick={onClose} className="underline flex-shrink-0">dismiss</button>
     </div>
   );
 }
 
 export default function Home() {
-  const [userAddr, setUserAddr] = useState<string | undefined>();
+  const [userAddr, setUserAddr] = useState<string>();
   const [walletClient, setWalletClient] = useState<any>();
-  const [streams, setStreams] = useState<any[]>([]);
-  const [merchantStreams, setMerchantStreams] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [toasts, setToasts] = useState<{ message: string; type: "success" | "error" | "info" }[]>([]);
-  const [networkOk, setNetworkOk] = useState(true);
-  const streamStartRef = useRef<number>(0);
+  const [asPayer, setAsPayer] = useState<StreamRow[]>([]);
+  const [asMerchant, setAsMerchant] = useState<StreamRow[]>([]);
+  const [busy, setBusy] = useState<string>("");
+  const [toasts, setToasts] = useState<{ message: string; type: string }[]>([]);
+  const [, setTick] = useState(0);
+  const [escrowed, setEscrowed] = useState<bigint>(ZERO);
+  const [paused, setPaused] = useState(false);
+  const [version, setVersion] = useState("");
   const toastId = useRef(0);
 
   const hasContract = isValidAddress(STREAMPAY_ADDRESS);
+  const nowSec = BigInt(Math.floor(Date.now() / 1000));
 
   const addToast = useCallback((message: string, type: "success" | "error" | "info" = "info") => {
-    const id = ++toastId.current;
-    setToasts(prev => [...prev, { message, type }]);
-    setTimeout(() => setToasts(prev => prev.filter((_, i) => i !== id - 1)), 5000);
+    toastId.current += 1;
+    setToasts((p) => [...p, { message, type }].slice(-4));
+    setTimeout(() => setToasts((p) => p.slice(1)), 7000);
   }, []);
 
-  const checkNetwork = useCallback(async () => {
-    if (!(window as any).ethereum) return false;
-    try {
-      const chainId = await (window as any).ethereum.request({ method: "eth_chainId" });
-      return chainId === "0x3013";
-    } catch {
-      return false;
-    }
+  // 1s local tick so the accrued figure visibly counts up between chain reads.
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
   }, []);
 
-
-  const retryCall = async (fn: () => Promise<any>, retries: number = 3, delay: number = 1000): Promise<any> => {
-    for (let i = 0; i < retries; i++) {
+  const retry = async <T,>(fn: () => Promise<T>, tries = 4, delay = 800): Promise<T> => {
+    let last: any;
+    for (let i = 0; i < tries; i++) {
       try {
         return await fn();
       } catch (e: any) {
-        if (i === retries - 1) throw e;
-        if (e.message?.includes("rate") || e.message?.includes("limit") || e.message?.includes("Bad Request")) {
-          await new Promise((r) => setTimeout(r, delay * (i + 1)));
-        } else {
-          throw e;
-        }
+        last = e;
+        const m = String(e?.message || "");
+        if (/rate|limit|Bad Request|429|timeout/i.test(m)) await new Promise((r) => setTimeout(r, delay * (i + 1)));
+        else throw e;
       }
     }
-    throw new Error("Max retries exceeded");
+    throw last;
   };
 
   const loadStreams = useCallback(async () => {
     if (!userAddr || !hasContract) return;
-    setLoading(true);
     try {
-      const payerIds = await retryCall(() => publicClient.readContract({
-        address: STREAMPAY_ADDRESS as `0x${string}`,
-        abi: STREAMPAY_ABI,
-        functionName: "getPayerStreams",
-        args: [userAddr as `0x${string}`],
-      }) as Promise<bigint[]>);
-      const merchantIds = await retryCall(() => publicClient.readContract({
-        address: STREAMPAY_ADDRESS as `0x${string}`,
-        abi: STREAMPAY_ABI,
-        functionName: "getMerchantStreams",
-        args: [userAddr as `0x${string}`],
-      }) as Promise<bigint[]>);
+      const [payerIds, merchantIds, esc, isPaused, ver] = await Promise.all([
+        retry(() => publicClient.readContract({ address: STREAMPAY_ADDRESS as `0x${string}`, abi: STREAMPAY_ABI, functionName: "getPayerStreams", args: [userAddr as `0x${string}`] }) as Promise<bigint[]>),
+        retry(() => publicClient.readContract({ address: STREAMPAY_ADDRESS as `0x${string}`, abi: STREAMPAY_ABI, functionName: "getMerchantStreams", args: [userAddr as `0x${string}`] }) as Promise<bigint[]>),
+        retry(() => publicClient.readContract({ address: STREAMPAY_ADDRESS as `0x${string}`, abi: STREAMPAY_ABI, functionName: "totalEscrowed" }) as Promise<bigint>),
+        retry(() => publicClient.readContract({ address: STREAMPAY_ADDRESS as `0x${string}`, abi: STREAMPAY_ABI, functionName: "paused" }) as Promise<boolean>),
+        retry(() => publicClient.readContract({ address: STREAMPAY_ADDRESS as `0x${string}`, abi: STREAMPAY_ABI, functionName: "VERSION" }) as Promise<string>).catch(() => ""),
+      ]);
+      setEscrowed(esc);
+      setPaused(isPaused);
+      setVersion(ver);
 
-      const allIds = [...new Set([...payerIds, ...merchantIds])];
-      const batchSize = 3;
-      const results = [];
-      for (let i = 0; i < allIds.length; i += batchSize) {
-        const batch = allIds.slice(i, i + batchSize);
-        const batchResults = await Promise.all(
+      const ids = [...new Set([...payerIds, ...merchantIds].map((b) => Number(b)))];
+      const rows: StreamRow[] = [];
+      // Monad's public RPC rate-limits hard: 3 reads at a time, pause between batches.
+      for (let i = 0; i < ids.length; i += 3) {
+        const batch = ids.slice(i, i + 3);
+        const got = await Promise.all(
           batch.map(async (id) => {
-            let s, acc;
-            for (let retry = 0; retry < 3; retry++) {
-              try {
-                s = await publicClient.readContract({
-                  address: STREAMPAY_ADDRESS as `0x${string}`,
-                  abi: STREAMPAY_ABI,
-                  functionName: "streams",
-                  args: [id],
-                }) as [string, string, bigint, bigint, bigint, bigint, bigint, boolean];
-                acc = await retryCall(() => publicClient.readContract({
-                  address: STREAMPAY_ADDRESS as `0x${string}`,
-                  abi: STREAMPAY_ABI,
-                  functionName: "accrued",
-                  args: [id],
-                }) as Promise<bigint>);
-                break;
-              } catch (e: any) {
-                if (e.message?.includes("limited to 15/sec") && retry < 2) {
-                  await new Promise((r) => setTimeout(r, 1000));
-                } else throw e;
-              }
-            }
-            return { id: Number(id), payer: s![0], merchant: s![1], amountPerSecond: s![2], startTime: s![3], lastClaimed: s![4], totalPaid: s![5], duration: s![6], active: s![7], accrued: acc, countdown: s![6] > 0n && s![7] ? s![6] - (BigInt(Math.floor(Date.now()/1000)) - s![3]) : 0n };
+            const s: any = await retry(() =>
+              publicClient.readContract({ address: STREAMPAY_ADDRESS as `0x${string}`, abi: STREAMPAY_ABI, functionName: "streams", args: [BigInt(id)] })
+            );
+            return {
+              id, payer: s[0], merchant: s[1], amountPerSecond: s[2], deposit: s[3],
+              withdrawn: s[4], startTime: s[5], duration: s[6], active: s[7], cancelled: s[8],
+            } as StreamRow;
           })
         );
-        results.push(...batchResults);
-        if (i + batchSize < allIds.length) {
-          await new Promise((r) => setTimeout(r, 500));
-        }
+        rows.push(...got);
+        if (i + 3 < ids.length) await new Promise((r) => setTimeout(r, 500));
       }
-
-      const payerStreams = results.filter((r) => payerIds.includes(BigInt(r.id)));
-      const mStreams = results.filter((r) => merchantIds.includes(BigInt(r.id)));
-      setStreams(payerStreams);
-      setMerchantStreams(mStreams);
+      setAsPayer(rows.filter((r) => r.payer.toLowerCase() === userAddr.toLowerCase()));
+      setAsMerchant(rows.filter((r) => r.merchant.toLowerCase() === userAddr.toLowerCase()));
     } catch (e: any) {
-      console.error("Load error:", e);
-      addToast("Load failed: " + (e.message || "unknown error"), "error");
+      addToast("Load failed: " + String(e?.shortMessage || e?.message || e), "error");
     }
-    setLoading(false);
-  }, [userAddr, hasContract]);
+  }, [userAddr, hasContract, addToast]);
 
   useEffect(() => {
     if (userAddr) loadStreams();
-    const interval = setInterval(loadStreams, 5000);
-    return () => clearInterval(interval);
-  }, [userAddr]);
+    const iv = setInterval(() => { if (userAddr) loadStreams(); }, 6000);
+    return () => clearInterval(iv);
+  }, [userAddr, loadStreams]);
 
   const connect = async () => {
-    if (!(window as any).ethereum) { addToast("Install MetaMask", "error"); return; }
-    const ok = await checkNetwork();
-    setNetworkOk(ok);
-    if (!ok) {
-      try {
-        await (window as any).ethereum.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: "0x3013" }],
-        });
-        addToast("Switched to Monad testnet", "success");
-      } catch (e: any) {
-        if (e.code === 4902) {
-          addToast("Add Monad testnet to MetaMask first", "error");
-        } else if (e.code === -32603) {
-          addToast("Already on Monad testnet — approve the connection", "info");
-        } else {
-          addToast(`Network issue: ${e.message}`, "error");
+    const eth = (window as any).ethereum;
+    if (!eth) { addToast("Install MetaMask", "error"); return; }
+    try {
+      const chainId = await eth.request({ method: "eth_chainId" });
+      if (chainId !== "0x3013") {
+        try {
+          await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x3013" }] });
+        } catch (e: any) {
+          if (e.code === 4902) addToast("Add Monad testnet (chainId 10143) to MetaMask first", "error");
+          else if (e.code === -32603) addToast("Approve the connection in MetaMask", "info");
+          else addToast(`Network: ${e.message}`, "error");
         }
       }
-    }
-    try {
-      // Clear any pending permissions first
-      try {
-        await (window as any).ethereum.request({ method: "wallet_requestPermissions", params: [{ eth_accounts: {} }] });
-      } catch (_) { /* ignore — permissions may already be granted */ }
-
-      const accounts = await (window as any).ethereum.request({ method: "eth_requestAccounts" });
-      const wc = createWalletClient({ account: accounts[0], chain: monadTestnet, transport: custom((window as any).ethereum) });
-      setUserAddr(accounts[0]);
+      try { await eth.request({ method: "wallet_requestPermissions", params: [{ eth_accounts: {} }] }); } catch { /* already granted */ }
+      const accounts: string[] = await eth.request({ method: "eth_requestAccounts" });
+      const wc = createWalletClient({ account: accounts[0] as `0x${string}`, chain: monadTestnet, transport: custom(eth) });
       setWalletClient(wc);
-      addToast("Connected: " + accounts[0].slice(0, 8) + "..." + accounts[0].slice(-6), "info");
-
-      (window as any).ethereum.on("accountsChanged", (accs: string[]) => {
-        if (accs.length > 0) {
-          setUserAddr(accs[0]);
-          addToast("Switched to: " + accs[0].slice(0, 8) + "..." + accs[0].slice(-6), "info");
-          setTimeout(() => loadStreams(), 500);
-        }
-      });
+      setUserAddr(accounts[0]);
+      addToast("Connected " + short(accounts[0]), "success");
+      eth.on("accountsChanged", (accs: string[]) => { if (accs.length) setUserAddr(accs[0]); });
+      eth.on("chainChanged", () => window.location.reload());
     } catch (e: any) {
-      if (e.code === -32002) {
-        addToast("Approval already pending — check MetaMask or refresh the page", "error");
-      } else if (e.code === 4001) {
-        addToast("Connection rejected by user", "error");
-      } else {
-        addToast(`Connect failed: ${e.message}`, "error");
-      }
+      if (e.code === -32002) addToast("MetaMask already has a pending request — open it, or restart the dev server", "error");
+      else if (e.code === 4001) addToast("Connection rejected", "error");
+      else addToast(`Connect failed: ${e.message}`, "error");
     }
   };
 
-  const handleCreateStream = async (merchant: string, perSecond: string, duration: string) => {
-    if (!walletClient) { addToast("Wallet not connected", "error"); return; }
-    if (!hasContract) { addToast("Contract not deployed", "error"); return; }
+  /**
+   * Every write goes out with an explicit gas limit (estimate + 30%).
+   * Monad testnet charges ~102 gwei and a write sent with an inflated estimate
+   * was measured at 25x the real cost — 3,545,029 gas vs 135,293 for the same
+   * cancel. Never let the estimate float.
+   */
+  const send = async (label: string, fn: string, args: any[], value = ZERO) => {
+    if (!walletClient || !userAddr) { addToast("Connect a wallet first", "error"); return false; }
+    setBusy(label);
+    try {
+      // Cast the clients to any: this is a dynamic dispatcher over the ABI, so the
+      // strict per-function argument tuples that parseAbi generates can't be used here.
+      const est = await (publicClient as any).estimateContractGas({
+        address: STREAMPAY_ADDRESS, abi: STREAMPAY_ABI, functionName: fn, args, value, account: userAddr,
+      });
+      const hash = await (walletClient as any).writeContract({
+        address: STREAMPAY_ADDRESS, abi: STREAMPAY_ABI, functionName: fn, args, value,
+        gas: (est * 13n) / 10n, account: userAddr, chain: monadTestnet,
+      });
+      addToast(`${label} sent — ${short(hash)}`, "info");
+      const rcpt = await publicClient.waitForTransactionReceipt({ hash });
+      if (rcpt.status !== "success") { addToast(`${label} reverted on-chain`, "error"); return false; }
+      addToast(`${label} confirmed`, "success");
+      await loadStreams();
+      return true;
+    } catch (e: any) {
+      addToast(`${label} failed: ${String(e?.shortMessage || e?.message || e).split("\n")[0]}`, "error");
+      return false;
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const create = (merchant: string, rate: string, duration: string, budget: string) => {
     if (!isValidAddress(merchant)) { addToast("Invalid merchant address", "error"); return; }
-
-    setLoading(true);
+    let rateWei: bigint, dur: bigint, deposit: bigint;
     try {
-      const amount = parseUnits(perSecond, 18);
-      const dur = BigInt(duration === "" ? "0" : duration);
-      const totalAmount = amount * (dur > 0n ? dur : 1000000000000000000n);
-
-      const tokenAddr = await publicClient.readContract({
-        address: STREAMPAY_ADDRESS as `0x${string}`,
-        abi: STREAMPAY_ABI,
-        functionName: "paymentToken",
-      }) as `0x${string}`;
-
-      const TOKEN_ABI = parseAbi([
-        "function allowance(address owner, address spender) view returns (uint256)",
-        "function approve(address spender, uint256 amount) returns (bool)",
-      ]);
-
-      const allowance = await publicClient.readContract({
-        address: tokenAddr,
-        abi: TOKEN_ABI,
-        functionName: "allowance",
-        args: [userAddr as `0x${string}`, STREAMPAY_ADDRESS as `0x${string}`],
-      });
-
-      if (allowance < totalAmount) {
-        addToast("Approving tokens (max)...", "info");
-        const { request } = await publicClient.simulateContract({
-          address: tokenAddr,
-          abi: TOKEN_ABI,
-          functionName: "approve",
-          args: [STREAMPAY_ADDRESS as `0x${string}`, (BigInt(2) ** BigInt(256)) - BigInt(1)],
-          account: userAddr as `0x${string}`,
-        });
-        const hash = await walletClient.writeContract(request);
-        await publicClient.waitForTransactionReceipt({ hash });
-        addToast("Tokens approved", "success");
-      }
-
-      addToast("Creating stream...", "info");
-      const { request } = await publicClient.simulateContract({
-        address: STREAMPAY_ADDRESS as `0x${string}`,
-        abi: STREAMPAY_ABI,
-        functionName: "createStream",
-        args: [merchant as `0x${string}`, amount, dur],
-        account: userAddr as `0x${string}`,
-      });
-      const hash = await walletClient.writeContract(request);
-      await publicClient.waitForTransactionReceipt({ hash });
-      addToast("Stream created!", "success");
-      loadStreams();
-    } catch (e: any) {
-      addToast(`Error: ${e.message}`, "error");
+      rateWei = parseEther(rate || "0");
+      dur = BigInt(duration || "0");
+      deposit = dur > ZERO ? rateWei * dur : parseEther(budget || "0");
+    } catch {
+      addToast("Rate / duration / deposit must be plain numbers", "error");
+      return;
     }
-    setLoading(false);
+    if (rateWei <= ZERO) { addToast("Rate must be greater than zero", "error"); return; }
+    if (deposit <= ZERO) { addToast("Deposit must be greater than zero", "error"); return; }
+    return send("Create stream", "createStream", [merchant as `0x${string}`, rateWei, dur], deposit);
   };
 
-  const handleClaim = async (streamId: number) => {
-    if (!walletClient) return;
-    setLoading(true);
-    try {
-      addToast("Claiming...", "info");
-      const { request } = await publicClient.simulateContract({
-        address: STREAMPAY_ADDRESS as `0x${string}`,
-        abi: STREAMPAY_ABI,
-        functionName: "claim",
-        args: [BigInt(streamId)],
-        account: userAddr as `0x${string}`,
-      });
-      const hash = await walletClient.writeContract(request);
-      await publicClient.waitForTransactionReceipt({ hash });
-      addToast("Claimed!", "success");
-      loadStreams();
-    } catch (e: any) {
-      addToast(`Error: ${e.message}`, "error");
-    }
-    setLoading(false);
-  };
-
-  const handleCancel = async (streamId: number) => {
-    if (!walletClient) return;
-    setLoading(true);
-    try {
-      addToast("Cancelling stream...", "info");
-      const { request } = await publicClient.simulateContract({
-        address: STREAMPAY_ADDRESS as `0x${string}`,
-        abi: STREAMPAY_ABI,
-        functionName: "cancel",
-        args: [BigInt(streamId)],
-        account: userAddr as `0x${string}`,
-      });
-      const hash = await walletClient.writeContract(request);
-      await publicClient.waitForTransactionReceipt({ hash });
-      addToast("Stream cancelled", "success");
-      loadStreams();
-    } catch (e: any) {
-      addToast(`Error: ${e.message}`, "error");
-    }
-    setLoading(false);
-  };
-
-  const handleExtend = async (streamId: number, extraSec: string) => {
-    if (!walletClient) return;
-    setLoading(true);
-    try {
-      addToast("Extending stream...", "info");
-      const { request } = await publicClient.simulateContract({
-        address: STREAMPAY_ADDRESS as `0x${string}`,
-        abi: STREAMPAY_ABI,
-        functionName: "extendStream",
-        args: [BigInt(streamId), BigInt(extraSec)],
-        account: userAddr as `0x${string}`,
-      });
-      const hash = await walletClient.writeContract(request);
-      await publicClient.waitForTransactionReceipt({ hash });
-      addToast("Stream extended", "success");
-      loadStreams();
-    } catch (e: any) {
-      addToast(`Error: ${e.message}`, "error");
-    }
-    setLoading(false);
-  };
-
-  const handleTransfer = async (streamId: number, newPayer: string) => {
-    if (!walletClient) return;
-    setLoading(true);
-    try {
-      addToast("Transferring stream...", "info");
-      const { request } = await publicClient.simulateContract({
-        address: STREAMPAY_ADDRESS as `0x${string}`,
-        abi: STREAMPAY_ABI,
-        functionName: "transferStream",
-        args: [BigInt(streamId), newPayer as `0x${string}`],
-        account: userAddr as `0x${string}`,
-      });
-      const hash = await walletClient.writeContract(request);
-      await publicClient.waitForTransactionReceipt({ hash });
-      addToast("Stream transferred", "success");
-      loadStreams();
-    } catch (e: any) {
-      addToast(`Error: ${e.message}`, "error");
-    }
-    setLoading(false);
-  };
-
-  const handleEmergencyWithdraw = async (streamId: number) => {
-    if (!walletClient) return;
-    setLoading(true);
-    try {
-      addToast("Withdrawing...", "info");
-      const { request } = await publicClient.simulateContract({
-        address: STREAMPAY_ADDRESS as `0x${string}`,
-        abi: STREAMPAY_ABI,
-        functionName: "emergencyWithdraw",
-        args: [BigInt(streamId)],
-        account: userAddr as `0x${string}`,
-      });
-      const hash = await walletClient.writeContract(request);
-      await publicClient.waitForTransactionReceipt({ hash });
-      addToast("Funds withdrawn", "success");
-      loadStreams();
-    } catch (e: any) {
-      addToast(`Error: ${e.message}`, "error");
-    }
-    setLoading(false);
-  };
-
-  const handleClaimAfterExpiry = async (streamId: number) => {
-    if (!walletClient) return;
-    setLoading(true);
-    try {
-      addToast("Claiming after expiry...", "info");
-      const { request } = await publicClient.simulateContract({
-        address: STREAMPAY_ADDRESS as `0x${string}`,
-        abi: STREAMPAY_ABI,
-        functionName: "claimAfterExpiry",
-        args: [BigInt(streamId)],
-        account: userAddr as `0x${string}`,
-      });
-      const hash = await walletClient.writeContract(request);
-      await publicClient.waitForTransactionReceipt({ hash });
-      addToast("Claimed after expiry", "success");
-      loadStreams();
-    } catch (e: any) {
-      addToast(`Error: ${e.message}`, "error");
-    }
-    setLoading(false);
-  };
-
-  const formatDuration = (sec: bigint) => {
-    if (sec === BigInt(0)) return "Unlimited";
-    const d = Number(sec);
-    const days = Math.floor(d / 86400);
-    const hrs = Math.floor((d % 86400) / 3600);
-    const mins = Math.floor((d % 3600) / 60);
-    const secs = d % 60;
-    if (days > 0) return `${days}d ${hrs}h`;
-    if (hrs > 0) return `${hrs}h ${mins}m`;
-    if (mins > 0) return `${mins}m ${secs}s`;
-    return `${secs}s`;
+  const Row = ({ s, role }: { s: StreamRow; role: "payer" | "merchant" }) => {
+    const cl = claimable(s, nowSec);
+    const rf = refundNow(s, nowSec);
+    const v = vested(s, nowSec);
+    const left = timeLeft(s, nowSec);
+    const over = ended(s, nowSec);
+    const state = s.cancelled ? "cancelled" : !s.active ? "settled" : over ? "ended — claim the remainder" : "active";
+    const pct = s.deposit > ZERO ? Number((v * BigInt(10000)) / s.deposit) / 100 : 0;
+    return (
+      <li className="border border-green-900 rounded p-3 bg-black/40">
+        <div className="flex justify-between items-baseline gap-2 flex-wrap">
+          <span className="text-xs text-gray-500">#{s.id} · {state}</span>
+          <span className="text-xs text-gray-500">rate {formatEther(s.amountPerSecond)} MON/s</span>
+        </div>
+        <div className="mt-2 h-1.5 w-full bg-gray-800 rounded overflow-hidden">
+          <div className="h-full bg-green-600" style={{ width: `${Math.min(100, pct)}%` }} />
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 text-xs mt-2 text-gray-400">
+          <span>escrowed</span><span className="text-green-300">{formatEther(s.deposit)} MON</span>
+          <span>earned by merchant</span><span className="text-green-300">{formatEther(v)} MON</span>
+          <span>{role === "merchant" ? "claimable now" : "accruing now"}</span>
+          <span className="text-green-400 font-bold">{formatEther(cl)} MON</span>
+          <span>already claimed</span><span>{formatEther(s.withdrawn)} MON</span>
+          {role === "payer" && (<><span>refund if cancelled</span><span className="text-yellow-300">{formatEther(rf)} MON</span></>)}
+          <span>{s.active && !over ? "time left" : "runway ended"}</span><span>{s.active ? fmtDuration(left) : "—"}</span>
+          <span>{role === "merchant" ? "payer" : "merchant"}</span>
+          <span>
+            <code className="text-[10px]">{role === "merchant" ? short(s.payer) : short(s.merchant)}</code>
+            <button onClick={() => copy(role === "merchant" ? s.payer : s.merchant)} className="ml-1 underline text-green-700">copy</button>
+          </span>
+        </div>
+        <div className="flex gap-2 mt-3 flex-wrap">
+          {role === "merchant" && s.active && cl > ZERO && (
+            <button onClick={() => send("Claim", "claim", [BigInt(s.id)])} disabled={!!busy}
+              className="bg-green-700 hover:bg-green-600 disabled:opacity-40 px-3 py-1 rounded text-xs">Claim {formatEther(cl)} MON</button>
+          )}
+          {role === "payer" && s.active && !s.cancelled && (
+            <>
+              <button onClick={() => send("Cancel", "cancel", [BigInt(s.id)])} disabled={!!busy}
+                className="bg-red-800 hover:bg-red-700 disabled:opacity-40 px-3 py-1 rounded text-xs">
+                Cancel{s.deposit > v ? ` (refund ${formatEther(rf)} MON)` : ""}
+              </button>
+              <button onClick={() => {
+                const amt = prompt("Top up with how much MON?", "0.01");
+                if (amt) send("Top up", "fundStream", [BigInt(s.id)], parseEther(amt));
+              }} disabled={!!busy} className="bg-blue-900 hover:bg-blue-800 disabled:opacity-40 px-3 py-1 rounded text-xs">Top up</button>
+              {s.duration > ZERO && (
+                <button onClick={() => {
+                  const secs = prompt("Extend by how many seconds? (escrow = seconds × rate)", "600");
+                  if (secs) send("Extend", "extendStream", [BigInt(s.id), BigInt(secs)], s.amountPerSecond * BigInt(secs));
+                }} disabled={!!busy} className="bg-purple-900 hover:bg-purple-800 disabled:opacity-40 px-3 py-1 rounded text-xs">Extend</button>
+              )}
+            </>
+          )}
+        </div>
+      </li>
+    );
   };
 
   return (
-    <main className="min-h-screen bg-black text-green-400 p-8 font-mono">
-      <h1 className="text-3xl font-bold mb-2">StreamPay</h1>
-      <p className="text-green-600 mb-6">Per-second subscriptions on Monad — gasless for users</p>
+    <main className="min-h-screen bg-black text-green-400 p-6 font-mono">
+      <header className="mb-6">
+        <h1 className="text-3xl font-bold">StreamPay</h1>
+        <p className="text-green-700 text-sm">
+          Per-second subscriptions in native MON on Monad — you escrow once, the merchant draws down as it vests, cancel refunds the rest.
+        </p>
+        {version && <p className="text-[11px] text-gray-600 mt-1">contract {short(STREAMPAY_ADDRESS)} · {version} · total escrowed {formatEther(escrowed)} MON{paused ? " · NEW STREAMS PAUSED" : ""}</p>}
+      </header>
+
+      {!hasContract && (
+        <div className="bg-red-950 border border-red-700 rounded p-3 mb-4 text-xs">
+          No contract address. Set NEXT_PUBLIC_STREAMPAY_ADDRESS in frontend/.env.local
+        </div>
+      )}
 
       {!userAddr ? (
-        <div className="bg-gray-900 border border-green-800 rounded-lg p-6 mb-6">
-          <p className="text-gray-400 mb-4">Connect wallet to start.</p>
-          <button onClick={connect} className="bg-green-700 hover:bg-green-600 text-white px-6 py-2 rounded">Connect MetaMask</button>
-        </div>
+        <button onClick={connect} className="bg-green-700 hover:bg-green-600 text-black font-bold px-6 py-2 rounded">Connect MetaMask</button>
       ) : (
         <>
-          <div className="flex items-center gap-3 mb-4 text-sm flex-wrap">
-            <span className="text-gray-400">Wallet:</span>
-            <code className="bg-gray-900 px-2 py-1 rounded">{userAddr.slice(0, 8)}...{userAddr.slice(-6)}</code>
-            <button onClick={() => copyToClipboard(userAddr)} className="text-green-600 underline text-xs">Copy</button>
-            <span className="text-gray-400">|</span>
-            <span className="text-gray-400">Contract:</span>
-            <code className="bg-gray-900 px-2 py-1 rounded text-xs">{STREAMPAY_ADDRESS.slice(0, 8)}...{STREAMPAY_ADDRESS.slice(-6)}</code>
-            <button onClick={() => copyToClipboard(STREAMPAY_ADDRESS)} className="text-green-600 underline text-xs">Copy</button>
-            <button onClick={() => loadStreams()} disabled={loading} className="bg-gray-700 hover:bg-gray-600 text-white px-2 py-1 rounded text-xs ml-auto">Refresh</button>
+          <div className="fixed top-3 right-3 z-50 w-80">
+            {toasts.map((t, i) => <Toast key={i} t={t} onClose={() => setToasts((p) => p.filter((_, j) => j !== i))} />)}
           </div>
 
-          <div className="fixed top-4 right-4 z-50 max-w-sm">
-            {toasts.map((t, i) => (
-              <Toast key={i} message={t.message} type={t.type} onClose={() => setToasts(prev => prev.filter((_, j) => j !== i))} />
-            ))}
+          <div className="flex items-center gap-3 mb-5 text-xs flex-wrap text-gray-500">
+            <span>wallet</span><code className="bg-gray-900 px-2 py-1 rounded text-green-300">{short(userAddr)}</code>
+            <button onClick={() => copy(userAddr)} className="underline text-green-700">copy</button>
+            <span>·</span><span>contract</span>
+            <code className="bg-gray-900 px-2 py-1 rounded text-green-300">{short(STREAMPAY_ADDRESS)}</code>
+            <button onClick={() => loadStreams()} className="ml-auto bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-green-300">Refresh</button>
           </div>
 
-          {!hasContract && (
-            <div className="bg-red-900 border border-red-800 rounded-lg p-4 mb-6">
-              <p className="text-red-400">Contract not set. Add NEXT_PUBLIC_STREAMPAY_ADDRESS to .env.local</p>
-            </div>
-          )}
+          {busy && <div className="text-yellow-400 text-xs mb-3">{busy}…</div>}
 
-          <div className="grid grid-cols-2 gap-6 mb-8">
-            <section className="bg-gray-900 border border-green-800 rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">Create Stream</h2>
-              <StreamForm onCreate={handleCreateStream} loading={loading} />
+          <div className="grid md:grid-cols-2 gap-5 mb-6">
+            <section className="bg-gray-950 border border-green-900 rounded p-4">
+              <h2 className="font-bold mb-3">Open a stream (payer)</h2>
+              <StreamForm onCreate={create} busy={!!busy} self={userAddr} />
             </section>
-            <section className="bg-gray-900 border border-green-800 rounded-lg p-6 mb-6">
-              <h2 className="text-xl font-bold mb-4">Your Streams (Payer)</h2>
-              {streams.length === 0 ? (
-                <div>
-                  <p className="text-gray-500 mb-3">No streams yet.</p>
-                  <button onClick={() => { handleCreateStream(userAddr || "0x0000000000000000000000000000000000000000", "0.001", "10"); }} disabled={loading || !userAddr} className="bg-blue-800 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">Create Test Stream (to yourself)</button>
-                  <p className="text-xs text-gray-600 mt-2">This creates a stream from your account to yourself for testing.</p>
-                </div>
-              ) : (
-                <ul className="space-y-2">{streams.map((s) => (
-                  <li key={`payer-${s.id}`} className="border border-green-800 rounded p-3">
-                    <p>Merchant: <code className="text-xs">{s.merchant.slice(0, 8)}...{s.merchant.slice(-6)}</code>
-                      <button onClick={() => copyToClipboard(s.merchant)} className="ml-1 text-green-600 underline text-xs">Copy</button>
-                    </p>
-                    <p>Rate: {formatEther(s.amountPerSecond)} MON/sec</p>
-                    <p>Accrued: {formatEther(s.accrued)} MON {s.countdown > 0n && <span style={{color: '#ff6b6b'}}>⏱ {s.countdown.toString()}s left</span>}</p>
-                    <p>Duration: {formatDuration(s.duration)}</p>
-                    <p>Status: {s.active ? (s.duration > BigInt(0) && /* need to check expiry */ "Active") : "Inactive"}</p>
-                    <p>Refund if cancel: {formatEther(s.totalPaid)} MON</p>
-                    {s.active && (
-                      <div className="flex gap-2 mt-2 flex-wrap">
-                        <button onClick={() => handleCancel(s.id)} disabled={loading} className="bg-red-800 hover:bg-red-700 text-white px-3 py-1 rounded text-xs">Cancel</button>
-                        <button onClick={() => { const ext = prompt("Extend by how many seconds?", "86400"); if (ext) handleExtend(s.id, ext); }} disabled={loading} className="bg-blue-800 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs">Extend</button>
-                        <button onClick={() => { const np = prompt("New payer address?"); if (np) handleTransfer(s.id, np); }} disabled={loading} className="bg-purple-800 hover:bg-purple-700 text-white px-3 py-1 rounded text-xs">Transfer</button>
-                        <button onClick={() => handleEmergencyWithdraw(s.id)} disabled={loading} className="bg-orange-800 hover:bg-orange-700 text-white px-3 py-1 rounded text-xs">Withdraw</button>
-                      </div>
-                    )}
-                    {!s.active && s.totalPaid > BigInt(0) && (
-                      <button onClick={() => handleClaimAfterExpiry(s.id)} disabled={loading} className="mt-2 bg-yellow-800 hover:bg-yellow-700 text-white px-3 py-1 rounded text-xs">Claim After Expiry</button>
-                    )}
-                  </li>
-                ))}</ul>
-              )}
+            <section className="bg-gray-950 border border-green-900 rounded p-4">
+              <h2 className="font-bold mb-3">Streams you pay for</h2>
+              {asPayer.length === 0
+                ? <p className="text-gray-600 text-xs">None yet. Open one on the left — you can pay yourself to rehearse.</p>
+                : <ul className="space-y-3">{asPayer.map((s) => <Row key={`p-${s.id}`} s={s} role="payer" />)}</ul>}
             </section>
           </div>
 
-          <section className="bg-gray-900 border border-green-800 rounded-lg p-6 mb-6">
-            <h2 className="text-xl font-bold mb-4">Merchant Dashboard</h2>
-            {merchantStreams.length === 0 ? (
-              <div>
-                <p className="text-gray-500 mb-3">No streams received.</p>
-                <button onClick={() => { handleCreateStream(userAddr || "0x00000000000000000000000000000000000000", "0.001", "10"); }} disabled={loading || !userAddr} className="bg-blue-800 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">Create Test Stream (to yourself)</button>
-                <p className="text-xs text-gray-600 mt-2">Creates a stream from your account to yourself for testing.</p>
-              </div>
-            ) : (
-              <ul className="space-y-2">{merchantStreams.map((s) => (
-                <li key={`merchant-${s.id}`} className="border border-green-800 rounded p-3 flex justify-between items-center">
-                  <div>
-                    <p>Payer: <code className="text-xs">{s.payer.slice(0, 8)}...{s.payer.slice(-6)}</code>
-                      <button onClick={() => copyToClipboard(s.payer)} className="ml-1 text-green-600 underline text-xs">Copy</button>
-                    </p>
-                    <p>Rate: {formatEther(s.amountPerSecond)} MON/sec</p>
-                    <p>Accrued: {formatEther(s.accrued)} MON {s.countdown > 0n && <span style={{color: '#ff6b6b'}}>⏱ {s.countdown.toString()}s left</span>}</p>
-                    <p>Duration: {formatDuration(s.duration)}</p>
-                    <p>Active: {s.active ? "Yes" : "No"}</p>
-                  </div>
-                  <button onClick={() => handleClaim(s.id)} disabled={loading} className={`px-4 py-2 rounded text-sm ${s.active ? "bg-green-700 hover:bg-green-600" : "bg-yellow-700 hover:bg-yellow-600"} text-white disabled:opacity-50`}>{s.active ? "Claim" : "Claim After Expiry"}</button>
-                </li>
-              ))}</ul>
-            )}
+          <section className="bg-gray-950 border border-green-900 rounded p-4 mb-6">
+            <h2 className="font-bold mb-3">Streams you get paid for (merchant)</h2>
+            {asMerchant.length === 0
+              ? <p className="text-gray-600 text-xs">Nothing addressed to this wallet.</p>
+              : <ul className="space-y-3">{asMerchant.map((s) => <Row key={`m-${s.id}`} s={s} role="merchant" />)}</ul>}
           </section>
 
-          <AdminPanel address={userAddr} contract={STREAMPAY_ADDRESS} publicClient={publicClient} walletClient={walletClient} addToast={addToast} loadStreams={loadStreams} loading={loading} />
+          {userAddr.toLowerCase() === OWNER && <AdminPanel paused={paused} busy={!!busy} send={send} />}
         </>
       )}
     </main>
   );
 }
 
-function StreamForm({ onCreate, loading }: { onCreate: (m: string, r: string, d: string) => void; loading: boolean }) {
+function StreamForm({ onCreate, busy, self }: { onCreate: (m: string, r: string, d: string, b: string) => void; busy: boolean; self: string }) {
   const [merchant, setMerchant] = useState("");
   const [rate, setRate] = useState("0.001");
-  const [duration, setDuration] = useState("0");
-  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); onCreate(merchant, rate, duration); };
+  const [duration, setDuration] = useState("600");
+  const [budget, setBudget] = useState("0.05");
+  const unlimited = duration === "0" || duration === "";
+  let preview = "";
+  try {
+    const rateWei = parseEther(rate || "0");
+    preview = unlimited
+      ? `${budget} MON covers ${rateWei > ZERO ? (parseEther(budget || "0") / rateWei).toString() : "0"}s at this rate`
+      : `escrow = ${rate} × ${duration}s = ${formatEther(rateWei * BigInt(duration || "0"))} MON`;
+  } catch { preview = "enter a valid rate"; }
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div><label className="block text-sm text-gray-400 mb-1">Merchant Address</label><input type="text" value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="0x..." className="w-full bg-gray-800 border border-green-800 rounded px-3 py-2 text-green-400 font-mono" required /></div>
-      <div><label className="block text-sm text-gray-400 mb-1">Rate (MON/sec)</label><input type="number" step="0.000001" value={rate} onChange={(e) => setRate(e.target.value)} className="w-full bg-gray-800 border border-green-800 rounded px-3 py-2 text-green-400 font-mono" required /></div>
-      <div><label className="block text-sm text-gray-400 mb-1">Duration (seconds, 0 = unlimited)</label><input type="number" value={duration} onChange={(e) => setDuration(e.target.value)} placeholder="0" className="w-full bg-gray-800 border border-green-800 rounded px-3 py-2 text-green-400 font-mono" /></div>
-      <button type="submit" disabled={loading} className="w-full bg-green-700 hover:bg-green-600 text-white py-2 rounded disabled:opacity-50">{loading ? "Creating..." : "Create Stream"}</button>
+    <form className="space-y-3 text-xs" onSubmit={(e) => { e.preventDefault(); onCreate(merchant, rate, duration, budget); }}>
+      <div>
+        <label className="block text-gray-500 mb-1">merchant address</label>
+        <input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="0x…" required
+          className="w-full bg-black border border-green-900 rounded px-2 py-1.5 text-green-300" />
+        <button type="button" onClick={() => setMerchant(self)} className="underline text-green-700 mt-1">use my own address (rehearse)</button>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-gray-500 mb-1">rate (MON per second)</label>
+          <input type="number" step="0.000001" min="0" value={rate} onChange={(e) => setRate(e.target.value)}
+            className="w-full bg-black border border-green-900 rounded px-2 py-1.5 text-green-300" />
+        </div>
+        <div>
+          <label className="block text-gray-500 mb-1">duration (seconds, 0 = until spent)</label>
+          <input type="number" min="0" value={duration} onChange={(e) => setDuration(e.target.value)}
+            className="w-full bg-black border border-green-900 rounded px-2 py-1.5 text-green-300" />
+        </div>
+      </div>
+      {unlimited && (
+        <div>
+          <label className="block text-gray-500 mb-1">deposit (MON budget)</label>
+          <input type="number" step="0.0001" min="0" value={budget} onChange={(e) => setBudget(e.target.value)}
+            className="w-full bg-black border border-green-900 rounded px-2 py-1.5 text-green-300" />
+        </div>
+      )}
+      <p className="text-gray-600">{preview}</p>
+      <p className="text-yellow-700">
+        Monad testnet gas is ~102 gwei, so a write costs ~0.01–0.02 MON. Pick a rate/deposit well above that or the fees dwarf the stream.
+      </p>
+      <button type="submit" disabled={busy}
+        className="w-full bg-green-700 hover:bg-green-600 disabled:opacity-40 text-black font-bold py-2 rounded">
+        {busy ? "working…" : "Escrow MON & open stream"}
+      </button>
     </form>
   );
 }
 
-function AdminPanel({ address, contract, publicClient, walletClient, addToast, loadStreams, loading }: {
-  address: string | undefined;
-  contract: string;
-  publicClient: any;
-  walletClient: any;
-  addToast: (msg: string, type: "success" | "error" | "info") => void;
-  loadStreams: () => void;
-  loading: boolean;
-}) {
-  const [adminAddr, setAdminAddr] = useState("");
-  useEffect(() => { if (address) setAdminAddr(address.toLowerCase()); }, [address]);
-  const isOwner = adminAddr === "0xcb19c6d23d0753228ed86039e790a624ea4670a1c";
-  const [pauseMsg, setPauseMsg] = useState("");
-
-  const doPause = async () => {
-    if (!walletClient) return;
-    try {
-      const { request } = await publicClient.simulateContract({ address: contract as `0x${string}`, abi: STREAMPAY_ABI, functionName: "pause", account: address as `0x${string}` });
-      const hash = await walletClient.writeContract(request);
-      await publicClient.waitForTransactionReceipt({ hash });
-      addToast("Paused", "success"); loadStreams();
-    } catch (e: any) { addToast(`Error: ${e.message}`, "error"); }
-  };
-  const doUnpause = async () => {
-    if (!walletClient) return;
-    try {
-      const { request } = await publicClient.simulateContract({ address: contract as `0x${string}`, abi: STREAMPAY_ABI, functionName: "unpause", account: address as `0x${string}` });
-      const hash = await walletClient.writeContract(request);
-      await publicClient.waitForTransactionReceipt({ hash });
-      addToast("Unpaused", "success"); loadStreams();
-    } catch (e: any) { addToast(`Error: ${e.message}`, "error"); }
-  };
-  const doSweep = async () => {
-    if (!walletClient) return;
-    try {
-      const { request } = await publicClient.simulateContract({ address: contract as `0x${string}`, abi: STREAMPAY_ABI, functionName: "sweepTokens", args: [adminAddr as `0x${string}`, BigInt(0)], account: address as `0x${string}` });
-      const hash = await walletClient.writeContract(request);
-      await publicClient.waitForTransactionReceipt({ hash });
-      addToast("Swept", "success"); loadStreams();
-    } catch (e: any) { addToast(`Error: ${e.message}`, "error"); }
-  };
-
-  if (!isOwner) return null;
+function AdminPanel({ paused, busy, send }: { paused: boolean; busy: boolean; send: (l: string, f: string, a: any[]) => Promise<boolean | undefined> }) {
   return (
-    <section className="bg-gray-900 border border-yellow-800 rounded-lg p-6 mb-6">
-      <h2 className="text-xl font-bold mb-4 text-yellow-400">Admin Panel</h2>
-      <div className="flex gap-3 flex-wrap">
-        <button onClick={doPause} disabled={loading} className="bg-red-800 hover:bg-red-700 text-white px-4 py-2 rounded text-sm">Pause All</button>
-        <button onClick={doUnpause} disabled={loading} className="bg-green-800 hover:bg-green-700 text-white px-4 py-2 rounded text-sm">Unpause All</button>
-        <button onClick={doSweep} disabled={loading} className="bg-yellow-800 hover:bg-yellow-700 text-black px-4 py-2 rounded text-sm">Sweep Tokens</button>
+    <section className="bg-gray-950 border border-yellow-800 rounded p-4">
+      <h2 className="font-bold text-yellow-500 mb-1">Owner controls</h2>
+      <p className="text-[11px] text-gray-500 mb-3">
+        Pause blocks new streams only — claiming and cancelling keep working, so no one&apos;s MON can ever be trapped.
+      </p>
+      <div className="flex gap-2 flex-wrap text-xs">
+        {!paused
+          ? <button onClick={() => send("Pause", "pause", [])} disabled={busy} className="bg-red-800 hover:bg-red-700 px-3 py-1.5 rounded disabled:opacity-40">Pause new streams</button>
+          : <button onClick={() => send("Unpause", "unpause", [])} disabled={busy} className="bg-green-800 hover:bg-green-700 px-3 py-1.5 rounded disabled:opacity-40">Unpause</button>}
+        <button onClick={() => send("Sweep excess", "sweepExcess", [])} disabled={busy} className="bg-yellow-800 hover:bg-yellow-700 text-black px-3 py-1.5 rounded disabled:opacity-40">Sweep excess (never touches escrow)</button>
       </div>
-      <p className="text-xs text-gray-500 mt-2">Owner: 0xcb19...a1c</p>
     </section>
   );
 }

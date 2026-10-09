@@ -1,52 +1,61 @@
 # StreamPay — Pitch Deck
 
 ## Problem
-Subscription payments in crypto are broken. Users pay monthly upfront, get charged even when they don't use the service, and every transaction requires gas — a terrible UX for mainstream adoption.
+Crypto subscriptions are all-or-nothing. You prepay a month, and if you leave early the merchant keeps the money. The usual fixes are worse:
+
+- on-chain recurring billing needs an off-chain keeper or scheduler to fire each charge
+- token-allowance billing hands the merchant a standing approval that can be drained
+- cancellation is a support ticket, not a transaction
+
+You cannot pay for exactly the time you used.
 
 ## Solution
-StreamPay: per-second subscription payments on Monad. Users pay only for what they use. Payments accrue in real time. Merchants claim whenever they want.
+StreamPay streams a subscription per second out of escrowed MON.
 
-## How It Works
-1. Payer creates a stream: merchant address + rate (e.g. 0.001 MON/sec) + optional duration
-2. Payer approves tokens once — the contract handles the rest
-3. Payments accrue per-second, continuously
-4. Merchant claims accrued balance at any time
-5. Payer can cancel anytime — remaining balance stays with merchant
-6. Owner can pause all streams (emergency stop)
+1. The payer escrows a budget when opening the stream (`rate × duration`, or an open-ended budget)
+2. The balance vests to the merchant every second — no keeper, no cron, no signature to collect
+3. The merchant claims whatever has vested, whenever they want
+4. The payer cancels at any time: the merchant is paid what already vested, and **everything unearned is refunded in the same transaction**
+5. The owner can pause *new* subscriptions, but never claim() or cancel() — nobody's MON can be trapped
+
+Because the money is escrowed in the contract, every payout is arithmetically exact and verifiable on-chain. `balance >= totalEscrowed` holds at all times (asserted by the test suite).
 
 ## Why Monad
-- 10,000 TPS, near-zero gas fees, 400ms block times
-- Native ERC-4337 support — gasless transactions out of the box
-- Machine Payments Protocol (MPP) built in — push/pull payments
+- Sub-second blocks make "per-second, watch it tick" feel live rather than theoretical
+- Cheap enough that claiming often is practical
+- Native MON means a judge can test it with a faucet drip — no owner has to mint them a token first
 
-## Challenge Tracks
-- ✅ Monad Track 2: Consumer Products & Payments ($30K)
-- ✅ Agora Bounty: Best Cross-Border Payments App ($10K)
+## Honest limitations
+- Gas on Monad **testnet** is priced at ~102 gwei, so a write costs roughly 0.01–0.02 MON. Rates below ~0.001 MON/sec are economically silly (one claim costs more than a day of streaming). That is testnet pricing, not mainnet.
+- There is **no paymaster yet**. The payer signs their own transactions; Monad's low fees do the work. Gasless sponsoring via ERC-4337 is roadmap, not shipped.
+- Testnet only. No audit.
 
-## Prize Target
-- Track prize: $30K (split 3 ways = $10K)
+## Challenge tracks
+- Monad Track 2 — Consumer Products & Payments
+- Cross-border remittance (Agora bounty) is a **roadmap** story, not a shipped feature: streaming a wage across borders needs FX/multi-currency rails that do not exist in this build.
+
+## Prize target
+- Track 2: $30K pool
 - Grand champion: $25K
-- Agora bounty: $10K
-- **Total: $45K+**
 
-## Tech Stack
-- Solidity 0.8.28 + OpenZeppelin (Ownable, Pausable)
-- Next.js 16 + viem
-- ERC-20 per-second accrual with merchant claims
+## Tech stack
+- Solidity 0.8.28 + OpenZeppelin (Ownable, Pausable, ReentrancyGuard), native-MON escrow
+- Next.js 16 + viem, MetaMask over Monad testnet (chainId 10143)
+- Hardhat 3 + viem for deploy and the on-chain test suite
 
-## Demo Flow
+## Demo flow (60s)
 1. Connect MetaMask to Monad testnet
-2. Create a stream: 0.001 MON/sec to merchant
-3. Watch accrued balance grow in real time
-4. Merchant claims payment — transaction confirmed in <1s
-5. Cancel a stream — show refund calculation
-6. Pause all streams — emergency stop demo
+2. Open a stream: 0.01 MON/sec for 600s, 6 MON escrowed
+3. Watch "accruing / claimable" tick up every second
+4. Switch to the merchant wallet, claim — confirmed in under a second
+5. Cancel from the payer — show the refund covering every unvested second
+6. Pause new streams; show that claim and cancel still work
 
 ## Team
-Solo builder. Web3/crypto developer. Building Otolo (gasless Naira P2P) and StreamPay in parallel for ETH Lagos 2026.
+Solo builder. Web3 developer. Also building Otolo (gasless Naira P2P) for ETH Lagos 2026.
 
 ## Roadmap
-- Post-hackathon: integrate with mobile wallets (WalletConnect)
-- Add recurring stream schedules (weekly, monthly)
-- Support multiple tokens (USDC, USDT)
-- Launch on mainnet with live payments
+- ERC-4337 paymaster so the payer never funds gas
+- Recurring top-ups / auto-renew when a deposit runs low
+- USDC and other ERC-20 streams alongside native MON
+- Wage streaming for cross-border payroll (the real Agora story), with an FX leg

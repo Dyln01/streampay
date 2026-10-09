@@ -6,3 +6,5 @@ frontend/.next/
 .env
 *.log
 .private/
+
+scripts/archive/

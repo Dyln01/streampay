@@ -1,6 +1,8 @@
 {
-  "passed": 10,
+  "passed": 48,
   "failed": 0,
-  "total": 10,
-  "contract": "0x16d9562d0d1dbf59b9436e4ac90daadd9530c406"
+  "total": 48,
+  "note": "throwaway contract deployed by the suite itself - NOT the submission address (see README.md)",
+  "testContract": "0xd24e8fd5e40b2354504beea889e0606142467290",
+  "version": "2.0.0-native-mon"
 }
