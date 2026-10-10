@@ -16,8 +16,9 @@
 - [x] `README.md` with setup, gas notes and an explicit "what is not built" section
 - [x] `PITCH_DECK.md` and `DEMO_SCRIPT.md` rewritten to match what the code actually does
 - [ ] **Demo video (60–75s)** — script ready in `DEMO_SCRIPT.md`, nothing recorded yet
-- [ ] Contract verified on the Monad explorer
+- [x] Contract verified (Sourcify — chainId 10143 is not yet on Etherscan/Blockscout provider lists, so those two are skipped)
 - [ ] (Optional) delete `scripts/archive/` throwaway scripts before judges look
+- [x] `scripts/demo-setup.ts` — opens one live 24h demo stream so the dashboard is accruing on camera
 
 ## Tracks targeted
 - **Monad Track 2 — Consumer Products & Payments** (primary, $30K pool)

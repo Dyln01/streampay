@@ -7,7 +7,8 @@ budget when they open the stream, the balance vests to the merchant every second
 merchant claims whenever they like, and cancelling refunds every unearned second in the
 same transaction. No keeper, no cron job, no standing allowance for a merchant to drain.
 
-- **Contract (Monad testnet):** `0x5b2e72fec4db3a7b6d315cc4560590e18d31d018`
+- **Contract (Monad testnet):** [`0x5b2e72fec4db3a7b6d315cc4560590e18d31d018`](https://sourcify.dev/server/repo-ui/10143/0x5b2e72fec4db3a7b6d315cc4560590e18d31d018/)
+- **Verified source:** readable on [Sourcify](https://sourcify.dev/server/repo-ui/10143/0x5b2e72fec4db3a7b6d315cc4560590e18d31d018/)
 - **`VERSION()`:** `2.0.0-native-mon` — read it to confirm you're pointed at this build
 - **Network:** Monad testnet, chainId `10143`, RPC `https://testnet-rpc.monad.xyz`
 

@@ -1,8 +1,10 @@
-import { HardhatUserConfig } from "hardhat/config";
+import { defineConfig } from "hardhat/config";
+import hardhatVerify from "@nomicfoundation/hardhat-verify";
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
-const config: HardhatUserConfig = {
+export default defineConfig({
+  plugins: [hardhatVerify],
   solidity: {
     version: "0.8.28",
     settings: { optimizer: { enabled: true, runs: 200 } },
@@ -15,6 +17,5 @@ const config: HardhatUserConfig = {
       accounts: PRIVATE_KEY ? [PRIVATE_KEY as `0x${string}`] : [],
     },
   },
-};
+});
 
-export default config;
