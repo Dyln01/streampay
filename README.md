@@ -88,8 +88,6 @@ frontend/src/app/page.tsx        Next.js 16 + viem UI (live per-second counter)
 
 ## What is not built yet
 
-Stated plainly so judges don't have to hunt for it:
-
 - **No paymaster / ERC-4337.** The payer signs and pays for their own transactions. Gasless
   sponsoring is roadmap.
 - **No cross-border/FX features.** The Agora remittance angle is a roadmap story, not code.
